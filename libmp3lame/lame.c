@@ -2386,7 +2386,7 @@ lame_init_internal_flags(lame_internal_flags* gfc)
     gfc->ov_rpg.noclipGainChange = 0;
     gfc->ov_rpg.noclipScale = -1.0;
 
-    gfc->ATH = lame_calloc(ATH_t, 1);
+    gfc->ATH = calloc_aligned16(1, sizeof(ATH_t));
     if (NULL == gfc->ATH)
         return -2;      /* maybe error codes should be enumerated in lame.h ?? */
 
@@ -2477,7 +2477,7 @@ lame_init_old(lame_global_flags * gfp)
     gfp->report.errorf = &lame_report_def;
     gfp->report.msgf = &lame_report_def;
 
-    gfp->internal_flags = lame_calloc(lame_internal_flags, 1);
+    gfp->internal_flags = calloc_aligned16(1, sizeof(lame_internal_flags));
 
     if (lame_init_internal_flags(gfp->internal_flags) < 0) {
         freegfc(gfp->internal_flags);

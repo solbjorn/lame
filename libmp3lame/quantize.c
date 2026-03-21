@@ -99,7 +99,7 @@ init_xrpow_core_init(lame_internal_flags * const gfc)
         gfc->init_xrpow_core = init_xrpow_core_sse;
 #endif
 #ifndef HAVE_NASM
-#ifdef MIN_ARCH_SSE
+#if defined(MIN_ARCH_SSE) || defined(__x86_64__)
     gfc->init_xrpow_core = init_xrpow_core_sse;
 #endif
 #endif
@@ -1495,7 +1495,7 @@ VBR_old_iteration_loop(lame_internal_flags * gfc, const FLOAT pe[2][2],
     EncResult_t *const eov = &gfc->ov_enc;
     FLOAT   l3_xmin[2][2][SFBMAX];
 
-    FLOAT   xrpow[576];
+    FLOAT   xrpow[576] __attribute__ ((aligned (16)));
     int     bands[2][2];
     int     frameBits[16];
     int     used_bits;
@@ -1923,7 +1923,7 @@ ABR_iteration_loop(lame_internal_flags * gfc, const FLOAT pe[2][2],
     SessionConfig_t const *const cfg = &gfc->cfg;
     EncResult_t *const eov = &gfc->ov_enc;
     FLOAT   l3_xmin[SFBMAX];
-    FLOAT   xrpow[576];
+    FLOAT   xrpow[576] __attribute__ ((aligned (16)));
     int     targ_bits[2][2];
     int     mean_bits, max_frame_bits;
     int     ch, gr, ath_over;
@@ -2012,7 +2012,7 @@ CBR_iteration_loop(lame_internal_flags * gfc, const FLOAT pe[2][2],
 {
     SessionConfig_t const *const cfg = &gfc->cfg;
     FLOAT   l3_xmin[SFBMAX];
-    FLOAT   xrpow[576];
+    FLOAT   xrpow[576] __attribute__ ((aligned (16)));
     int     targ_bits[2];
     int     mean_bits, max_bits;
     int     gr, ch;

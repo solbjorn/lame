@@ -46,7 +46,7 @@ typedef struct {
 
 typedef struct {
     FLOAT   xr[576];
-    int     l3_enc[576];
+    int     l3_enc[576] __attribute__ ((aligned (16)));
     int     scalefac[SFBMAX];
     FLOAT   xrpow_max;
 
@@ -84,7 +84,7 @@ typedef struct {
 } gr_info;
 
 typedef struct {
-    gr_info tt[2][2];
+    gr_info tt[2][2] __attribute__ ((aligned (16)));
     int     main_data_begin;
     int     private_bits;
     int     resvDrain_pre;

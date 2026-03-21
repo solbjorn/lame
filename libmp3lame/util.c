@@ -140,7 +140,7 @@ freegfc(lame_internal_flags * const gfc)
         gfc->VBR_seek_table.size = 0;
     }
     if (gfc->ATH) {
-        free(gfc->ATH);
+        free_aligned16(gfc->ATH);
     }
     if (gfc->sv_rpg.rgdata) {
         free(gfc->sv_rpg.rgdata);
@@ -162,7 +162,7 @@ freegfc(lame_internal_flags * const gfc)
 
     free_global_data(gfc);
 
-    free(gfc);
+    free_aligned16(gfc);
 }
 
 void

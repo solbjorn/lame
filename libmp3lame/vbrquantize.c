@@ -26,6 +26,7 @@
 #  include <config.h>
 #endif
 
+#undef TAKEHIRO_IEEE754_HACK
 
 #include "lame.h"
 #include "machine.h"
@@ -34,7 +35,9 @@
 #include "vbrquantize.h"
 #include "quantize_pvt.h"
 
-
+#if (defined(__GNUC__) || defined(__clang__)) && (defined(__i386__) || defined(__x86_64__))
+#include <xmmintrin.h>
+#endif
 
 
 struct algo_s;
@@ -226,6 +229,81 @@ calc_sfb_noise_x34(const FLOAT * xr, const FLOAT * xr34, unsigned int bw, uint8_
     unsigned int i = bw >> 2u;
     unsigned int const remaining = (bw & 0x03u);
 
+#if (defined(__GNUC__) || defined(__clang__)) && (defined(__i386__) || defined(__x86_64__))
+    __m128 v1, v2, v3, v4, v5, v6, v7, v8;
+#if defined(_WIN64)
+    long long tmp;
+#else
+    long tmp;
+#endif
+    v6 = _mm_set_ss(sfpow34);
+    v7 = _mm_set_ss(sfpow);
+    __asm__ __volatile__ (
+        "xorps		%7, %7				\n\t"
+        "testl		%8, %8				\n\t"
+        "jz			2f					\n\t"
+        "shufps		$0x00, %5, %5		\n\t"
+        "shufps		$0x00, %6, %6		\n\t"
+        "pcmpeqd	%4, %4				\n\t"
+        "psrld		$1, %4				\n\t"
+
+        "1:								\n\t"
+        "movups		(%10), %1			\n\t"
+        "mulps		%5, %1				\n\t"
+        "cvttss2si	%1, %11				\n\t"
+        "shufps		$0xe5, %1, %1		\n\t"
+        "movlps		(%12,%11,4), %2		\n\t"
+        "cvttss2si	%1, %11				\n\t"
+        "movhlps	%1, %1				\n\t"
+        "movhps		(%12,%11,4), %2		\n\t"
+        "cvttss2si	%1, %11				\n\t"
+        "shufps		$0x55, %1, %1		\n\t"
+        "movlps		(%12,%11,4), %3		\n\t"
+        "cvttss2si	%1, %11				\n\t"
+        "movups		(%9), %1			\n\t"
+        "movhps		(%12,%11,4), %3		\n\t"
+        "mulps		%6, %2				\n\t"
+        "mulps		%6, %3				\n\t"
+        "movaps		%2, %0				\n\t"
+        "shufps		$0x88, %3, %0		\n\t"
+        "shufps		$0xdd, %3, %2		\n\t"
+
+        "andps		%4, %1				\n\t"
+        "subps		%1, %2				\n\t"
+        "subps		%0, %1				\n\t"
+        "movaps		%1, %0				\n\t"
+        "cmpltps	%2, %1				\n\t"
+        "andps		%1, %0				\n\t"
+        "andnps		%2, %1				\n\t"
+        "orps		%1, %0				\n\t"
+        "mulps		%0, %0				\n\t"
+        "addps		%0, %7				\n\t"
+
+#if defined(__x86_64__)
+        "addq		$16, %9				\n\t"
+        "addq		$16, %10			\n\t"
+#else
+        "addl		$16, %9				\n\t"
+        "addl		$16, %10			\n\t"
+#endif
+        "decl		%8					\n\t"
+        "jnz		1b					\n\t"
+        "movhlps	%7, %0				\n\t"
+        "addps		%0, %7				\n\t"
+#if defined(__SSE3__)
+        "haddps		%7, %7				\n\t"
+#else
+        "movaps		%7, %0				\n\t"
+        "shufps		$0x01, %0, %0		\n\t"
+        "addps		%0, %7				\n\t"
+#endif
+        "2:								\n\t"
+        : "=x" (v1), "=x" (v2), "=x" (v3), "=x" (v4), "=x" (v5), "+x" (v6), "+x" (v7), "=x" (v8),
+          "+r" (i), "+r" (xr), "+r" (xr34), "=&r" (tmp)
+        : "r" (pow43)
+    );
+    _mm_store_ss(&xfsf, v8);
+#else
     while (i-- > 0) {
         x[0] = sfpow34 * xr34[0];
         x[1] = sfpow34 * xr34[1];
@@ -243,6 +321,7 @@ calc_sfb_noise_x34(const FLOAT * xr, const FLOAT * xr34, unsigned int bw, uint8_
         xr += 4;
         xr34 += 4;
     }
+#endif
     if (remaining) {
         x[0] = x[1] = x[2] = x[3] = 0;
         switch( remaining ) {

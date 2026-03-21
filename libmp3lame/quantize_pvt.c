@@ -27,6 +27,7 @@
 # include <config.h>
 #endif
 
+#undef TAKEHIRO_IEEE754_HACK
 
 #include "lame.h"
 #include "machine.h"
@@ -37,6 +38,9 @@
 #include "lame-analysis.h"
 #include <float.h>
 
+#if (defined(__GNUC__) || defined(__clang__)) && (defined(__i386__) || defined(__x86_64__))
+#include <xmmintrin.h>
+#endif
 
 #define NSATHSCALE 100  /* Assuming dynamic range=96dB, this value should be 92 */
 
@@ -767,6 +771,70 @@ calc_noise_core_c(const gr_info * const cod_info, int *startline, int l, FLOAT s
         }
     }
     else if (j > cod_info->big_values) {
+#if (defined(__GNUC__) || defined(__clang__)) && (defined(__i386__) || defined(__x86_64__))
+        __m128 v1, v2, v3, v4, v5;
+        int remaining = l & 1;
+        l = l >> 1;
+        const int *ixp = ix+j;
+        const FLOAT *xrp = cod_info->xr+j;
+        j += 4*l;
+        v5 = _mm_set_ss(step);
+        __asm__ __volatile__ (
+            "xorps		%3, %3				\n\t"
+            "testl		%5, %5				\n\t"
+            "jz			2f					\n\t"
+            "shufps		$0x00, %4, %4		\n\t"
+            "pcmpeqd	%1, %1				\n\t"
+            "psrld		$1, %1				\n\t"
+
+            "1:								\n\t"
+            "pxor		%0, %0				\n\t"
+            "movups		(%6), %2			\n\t"
+            "pcmpeqd	%0, %2				\n\t"
+            "pandn		%4, %2				\n\t"
+
+            "movups		(%7), %0			\n\t"
+            "andps		%1, %0				\n\t"
+            "subps		%2, %0				\n\t"
+            "mulps		%0, %0				\n\t"
+            "addps		%0, %3				\n\t"
+
+#if defined(__x86_64__)
+            "addq		$16, %6				\n\t"
+            "addq		$16, %7				\n\t"
+#else
+            "addl		$16, %6				\n\t"
+            "addl		$16, %7				\n\t"
+#endif
+            "decl		%5					\n\t"
+            "jnz		1b					\n\t"
+            "movhlps	%3, %0				\n\t"
+            "addps		%0, %3				\n\t"
+#if defined(__SSE3__)
+            "haddps		%3, %3				\n\t"
+#else
+            "movaps		%3, %0				\n\t"
+            "shufps		$0x01, %0, %0		\n\t"
+            "addps		%0, %3				\n\t"
+#endif
+            "2:								\n\t"
+            : "=x" (v1), "=x" (v2), "=x" (v3), "=x" (v4), "+x" (v5),
+              "+r" (l), "+r" (ixp), "+r" (xrp)
+        );
+        _mm_store_ss(&noise, v4);
+        if (remaining) {
+            FLOAT   ix01[2];
+            ix01[0] = 0;
+            ix01[1] = step;
+            FLOAT   temp;
+            temp = fabs(cod_info->xr[j]) - ix01[ix[j]];
+            j++;
+            noise += temp * temp;
+            temp = fabs(cod_info->xr[j]) - ix01[ix[j]];
+            j++;
+            noise += temp * temp;
+        }
+#else
         FLOAT   ix01[2];
         ix01[0] = 0;
         ix01[1] = step;
@@ -779,8 +847,95 @@ calc_noise_core_c(const gr_info * const cod_info, int *startline, int l, FLOAT s
             j++;
             noise += temp * temp;
         }
+#endif
     }
     else {
+#if (defined(__GNUC__) || defined(__clang__)) && (defined(__i386__) || defined(__x86_64__))
+        __m128 v1, v2, v3, v4, v5, v6;
+        int remaining = l & 1;
+        l = l >> 1;
+#if defined(_WIN64)
+        long long tmp;
+#else
+        long tmp;
+#endif
+        const int *ixp = ix+j;
+        const FLOAT *xrp = cod_info->xr+j;
+        j += 4*l;
+        v5 = _mm_set_ss(step);
+        __asm__ __volatile__ (
+            "xorps		%5, %5				\n\t"
+            "testl		%6, %6				\n\t"
+            "jz			2f					\n\t"
+            "shufps		$0x00, %4, %4		\n\t"
+            "1:								\n\t"
+
+#if defined(__x86_64__)
+            "movslq		(%7), %9			\n\t"
+            "movss		(%10,%9,4), %2		\n\t"
+            "movslq		4(%7), %9			\n\t"
+            "movss		(%10,%9,4), %1		\n\t"
+            "movslq		8(%7), %9			\n\t"
+            "movss		(%10,%9,4), %0		\n\t"
+            "movslq		12(%7), %9			\n\t"
+            "movss		(%10,%9,4), %3		\n\t"
+#else
+            "movl		(%7), %9			\n\t"
+            "movss		(%10,%9,4), %2		\n\t"
+            "movl		4(%7), %9			\n\t"
+            "movss		(%10,%9,4), %1		\n\t"
+            "movl		8(%7), %9			\n\t"
+            "movss		(%10,%9,4), %0		\n\t"
+            "movl		12(%7), %9			\n\t"
+            "movss		(%10,%9,4), %3		\n\t"
+#endif
+            "movlhps	%1, %2				\n\t"
+            "movlhps	%3, %0				\n\t"
+            "shufps		$0x88, %0, %2		\n\t"
+            "mulps		%4, %2				\n\t"
+
+            "movups		(%8), %0			\n\t"
+            "xorps		%1, %1				\n\t"
+            "subps		%0, %1				\n\t"
+            "maxps		%1, %0				\n\t"
+            "subps		%2, %0				\n\t"
+            "mulps		%0, %0				\n\t"
+            "addps		%0, %5				\n\t"
+
+#if defined(__x86_64__)
+            "addq		$16, %7				\n\t"
+            "addq		$16, %8				\n\t"
+#else
+            "addl		$16, %7				\n\t"
+            "addl		$16, %8				\n\t"
+#endif
+            "decl		%6					\n\t"
+            "jnz		1b					\n\t"
+            "movhlps	%5, %0				\n\t"
+            "addps		%0, %5				\n\t"
+#if defined(__SSE3__)
+            "haddps		%5, %5				\n\t"
+#else
+            "movaps		%5, %0				\n\t"
+            "shufps		$0x01, %0, %0		\n\t"
+            "addps		%0, %5				\n\t"
+#endif
+            "2:								\n\t"
+            : "=x" (v1), "=x" (v2), "=x" (v3), "=x" (v4), "+x" (v5), "=x" (v6),
+              "+r" (l), "+r" (ixp), "+r" (xrp), "=&r" (tmp)
+            : "r" (pow43)
+        );
+        _mm_store_ss(&noise, v6);
+        if (remaining) {
+            FLOAT   temp;
+            temp = fabs(cod_info->xr[j]) - pow43[ix[j]] * step;
+            j++;
+            noise += temp * temp;
+            temp = fabs(cod_info->xr[j]) - pow43[ix[j]] * step;
+            j++;
+            noise += temp * temp;
+        }
+#else
         while (l--) {
             FLOAT   temp;
             temp = fabs(cod_info->xr[j]) - pow43[ix[j]] * step;
@@ -790,6 +945,7 @@ calc_noise_core_c(const gr_info * const cod_info, int *startline, int l, FLOAT s
             j++;
             noise += temp * temp;
         }
+#endif
     }
 
     *startline = j;

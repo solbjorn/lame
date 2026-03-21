@@ -155,6 +155,9 @@ blocktype_d[2]        block type to use for previous granule
 #include "fft.h"
 #include "lame-analysis.h"
 
+#if (defined(__GNUC__) || defined(__clang__)) && (defined(__i386__) || defined(__x86_64__))
+#include <xmmintrin.h>
+#endif
 
 #define NSFIRLEN 21
 
@@ -218,10 +221,58 @@ psycho_loudness_approx(FLOAT const *energy, FLOAT const *eql_w)
     int     i;
     FLOAT   loudness_power;
 
+#if (defined(__GNUC__) || defined(__clang__)) && (defined(__i386__) || defined(__x86_64__))
+    __m128 v1, v2, v3, v4, v5, v6, v7, v8;
+    i = 32;
+    __asm__ __volatile__ (
+        "xorps		%0, %0				\n\t"
+        "xorps		%1, %1				\n\t"
+        "xorps		%2, %2				\n\t"
+        "xorps		%3, %3				\n\t"
+        "1:								\n\t"
+        "movaps		(%9), %4			\n\t"
+        "movaps		16(%9), %5			\n\t"
+        "movaps		32(%9), %6			\n\t"
+        "movaps		48(%9), %7			\n\t"
+        "mulps		(%10), %4			\n\t"
+        "mulps		16(%10), %5			\n\t"
+        "mulps		32(%10), %6			\n\t"
+        "mulps		48(%10), %7			\n\t"
+        "addps		%4, %0				\n\t"
+        "addps		%5, %1				\n\t"
+        "addps		%6, %2				\n\t"
+        "addps		%7, %3				\n\t"
+#if defined(__x86_64__)
+        "addq		$64, %9				\n\t"
+        "addq		$64, %10			\n\t"
+#else
+        "addl		$64, %9				\n\t"
+        "addl		$64, %10			\n\t"
+#endif
+        "decl		%8					\n\t"
+        "jnz		1b					\n\t"
+        "addps		%1, %0				\n\t"
+        "addps		%3, %2				\n\t"
+        "addps		%2, %0				\n\t"
+        "movhlps	%0, %1				\n\t"
+        "addps		%1, %0				\n\t"
+#if defined(__SSE3__)
+        "haddps		%0, %0				\n\t"
+#else
+        "movaps		%0, %1				\n\t"
+        "shufps		$0x01, %1, %1		\n\t"
+        "addps		%1, %0				\n\t"
+#endif
+        : "=x" (v1), "=x" (v2), "=x" (v3), "=x" (v4), "=x" (v5), "=x" (v6), "=x" (v7), "=x" (v8),
+          "+r" (i), "+r" (eql_w), "+r" (energy)
+    );
+    _mm_store_ss(&loudness_power, v1);
+#else
     loudness_power = 0.0;
     /* apply weights to power in freq. bands */
     for (i = 0; i < BLKSIZE / 2; ++i)
         loudness_power += energy[i] * eql_w[i];
+#endif
     loudness_power *= VO_SCALE;
 
     return loudness_power;
@@ -666,6 +717,9 @@ static void
 vbrpsy_compute_fft_l(lame_internal_flags * gfc, const sample_t * const buffer[2], int chn,
                      int gr_out, FLOAT fftenergy[HBLKSIZE], FLOAT(*wsamp_l)[BLKSIZE])
 {
+#if (defined(__GNUC__) || defined(__clang__)) && (defined(__i386__) || defined(__x86_64__))
+    __m128 v1, v2, v3, v4, v5, v6, v7;
+#endif
     SessionConfig_t const *const cfg = &gfc->cfg;
     PsyStateVar_t *psv = &gfc->sv_psy;
     plotting_data *plt = cfg->analysis ? gfc->pinfo : 0;
@@ -676,6 +730,47 @@ vbrpsy_compute_fft_l(lame_internal_flags * gfc, const sample_t * const buffer[2]
     }
     else if (chn == 2) {
         FLOAT const sqrt2_half = SQRT2 * 0.5f;
+#if (defined(__GNUC__) || defined(__clang__)) && (defined(__i386__) || defined(__x86_64__))
+        FLOAT *wsamp_lp1 = *wsamp_l;
+        FLOAT *wsamp_lp2 = *wsamp_l+1024;
+        j = 128;
+        __asm__ __volatile__ (
+            "movss		(%10), %6			\n\t"
+            "shufps		$0x00, %6, %6		\n\t"
+            "1:								\n\t"
+            "movaps		(%8), %0			\n\t"
+            "movaps		16(%8), %1			\n\t"
+            "movaps		(%9), %2			\n\t"
+            "movaps		16(%9), %3			\n\t"
+            "movaps		%0, %4				\n\t"
+            "movaps		%1, %5				\n\t"
+            "addps		%2, %0				\n\t"
+            "addps		%3, %1				\n\t"
+            "subps		%2, %4				\n\t"
+            "subps		%3, %5				\n\t"
+            "mulps		%6, %0				\n\t"
+            "mulps		%6, %1				\n\t"
+            "mulps		%6, %4				\n\t"
+            "mulps		%6, %5				\n\t"
+            "movaps		%0, (%8)			\n\t"
+            "movaps		%1, 16(%8)			\n\t"
+            "movaps		%4, 0(%9)			\n\t"
+            "movaps		%5, 16(%9)			\n\t"
+#if defined(__x86_64__)
+            "addq		$32, %8				\n\t"
+            "addq		$32, %9				\n\t"
+#else
+            "addl		$32, %8				\n\t"
+            "addl		$32, %9				\n\t"
+#endif
+            "decl		%7					\n\t"
+            "jnz		1b					\n\t"
+            : "=x" (v1), "=x" (v2), "=x" (v3), "=x" (v4), "=x" (v5), "=x" (v6), "=x" (v7),
+              "+r" (j), "+r" (wsamp_lp1), "+r" (wsamp_lp2)
+            : "r" (&sqrt2_half)
+            : "memory"
+        );
+#else
         /* FFT data for mid and side channel is derived from L & R */
         for (j = BLKSIZE - 1; j >= 0; --j) {
             FLOAT const l = wsamp_l[0][j];
@@ -683,6 +778,7 @@ vbrpsy_compute_fft_l(lame_internal_flags * gfc, const sample_t * const buffer[2]
             wsamp_l[0][j] = (l + r) * sqrt2_half;
             wsamp_l[1][j] = (l - r) * sqrt2_half;
         }
+#endif
     }
 
     /*********************************************************************
@@ -691,6 +787,73 @@ vbrpsy_compute_fft_l(lame_internal_flags * gfc, const sample_t * const buffer[2]
     fftenergy[0] = wsamp_l[0][0];
     fftenergy[0] *= fftenergy[0];
 
+#if (defined(__GNUC__) || defined(__clang__)) && (defined(__i386__) || defined(__x86_64__))
+    FLOAT *wsamp_lp1 = *wsamp_l+1;
+    FLOAT *wsamp_lp2 = *wsamp_l+1020;
+    FLOAT *fftenergyp = fftenergy+1;
+    j = 64;
+    __asm__ __volatile__ (
+        "pcmpeqd	%4, %4				\n\t"
+        "psrld		$26, %4				\n\t"
+        "pslld		$24, %4				\n\t"
+        "xorps		%5, %5				\n\t"
+        "1:								\n\t"
+        "movups		(%7), %0			\n\t"
+        "movups		16(%7), %1			\n\t"
+        "movaps		(%8), %2			\n\t"
+        "movaps		-16(%8), %3			\n\t"
+        "shufps		$0x1b, %2, %2		\n\t"
+        "shufps		$0x1b, %3, %3		\n\t"
+        "mulps		%0, %0				\n\t"
+        "mulps		%2, %2				\n\t"
+        "mulps		%1, %1				\n\t"
+        "mulps		%3, %3				\n\t"
+        "addps		%2, %0				\n\t"
+        "addps		%3, %1				\n\t"
+        "mulps		%4, %0				\n\t"
+        "mulps		%4, %1				\n\t"
+        "movups		%0, (%9)			\n\t"
+        "movups		%1, 16(%9)			\n\t"
+        "addps		%1, %0				\n\t"
+        "addps		%0, %5				\n\t"
+#if defined(__x86_64__)
+        "addq		$32, %7				\n\t"
+        "subq		$32, %8				\n\t"
+        "addq		$32, %9				\n\t"
+        "decl		%6					\n\t"
+        "jnz		1b					\n\t"
+        "subq		$2048, %9			\n\t"
+#else
+        "addl		$32, %7				\n\t"
+        "subl		$32, %8				\n\t"
+        "addl		$32, %9				\n\t"
+        "decl		%6					\n\t"
+        "jnz		1b					\n\t"
+        "subl		$2048, %9			\n\t"
+#endif
+        "movups		(%9), %0			\n\t"
+        "movups		16(%9), %1			\n\t"
+        "xorps		%2, %2				\n\t"
+        "movlps		32(%9), %2			\n\t"
+        "addps		%1, %0				\n\t"
+        "addps		%2, %0				\n\t"
+        "subps		%0, %5				\n\t"
+        "movhlps	%5, %0				\n\t"
+        "addps		%5, %0				\n\t"
+#if defined(__SSE3__)
+        "haddps		%0, %0				\n\t"
+#else
+        "movaps		%0, %1				\n\t"
+        "shufps		$0x01, %1, %1		\n\t"
+        "addps		%1, %0				\n\t"
+#endif
+        "movss		%0, (%10)			\n\t"
+        : "=x" (v1), "=x" (v2), "=x" (v3), "=x" (v4), "=x" (v5), "=x" (v6),
+        "+r" (j), "+r" (wsamp_lp1), "+r" (wsamp_lp2), "+r" (fftenergyp)
+        : "r" (&psv->tot_ener[chn])
+        : "memory"
+    );
+#else
     for (j = BLKSIZE / 2 - 1; j >= 0; --j) {
         FLOAT const re = (*wsamp_l)[BLKSIZE / 2 - j];
         FLOAT const im = (*wsamp_l)[BLKSIZE / 2 + j];
@@ -704,6 +867,7 @@ vbrpsy_compute_fft_l(lame_internal_flags * gfc, const sample_t * const buffer[2]
 
         psv->tot_ener[chn] = totalenergy;
     }
+#endif
 
     if (plt) {
         for (j = 0; j < HBLKSIZE; j++) {
@@ -772,7 +936,7 @@ vbrpsy_attack_detection(lame_internal_flags * gfc, const sample_t * const buffer
                         FLOAT energy[4], FLOAT sub_short_factor[4][3], int ns_attacks[4][4],
                         int uselongblock[2])
 {
-    FLOAT   ns_hpfsmpl[2][576];
+    FLOAT   ns_hpfsmpl[2][576] __attribute__ ((aligned (16)));
     SessionConfig_t const *const cfg = &gfc->cfg;
     PsyStateVar_t *const psv = &gfc->sv_psy;
     plotting_data *plt = cfg->analysis ? gfc->pinfo : 0;
@@ -785,14 +949,170 @@ vbrpsy_attack_detection(lame_internal_flags * gfc, const sample_t * const buffer
     /* Don't copy the input buffer into a temporary buffer */
     /* unroll the loop 2 times */
     for (chn = 0; chn < n_chn_out; chn++) {
-        static const FLOAT fircoef[] = {
+        static const FLOAT fircoef[] __attribute__ ((aligned (16))) = {
             -8.65163e-18 * 2, -0.00851586 * 2, -6.74764e-18 * 2, 0.0209036 * 2,
             -3.36639e-17 * 2, -0.0438162 * 2, -1.54175e-17 * 2, 0.0931738 * 2,
-            -5.52212e-17 * 2, -0.313819 * 2
+            -5.52212e-17 * 2, -0.313819 * 2, 0, 0
         };
         /* apply high pass filter of fs/4 */
         const sample_t *const firbuf = &buffer[chn][576 - 350 - NSFIRLEN + 192];
-        assert(dimension_of(fircoef) == ((NSFIRLEN - 1) / 2));
+        //assert(dimension_of(fircoef) == ((NSFIRLEN - 1) / 2));
+#if (defined(__GNUC__) || defined(__clang__)) && (defined(__i386__) || defined(__x86_64__))
+        __m128 v1, v2, v3, v4, v5, v6, v7;
+        float *firbufp = (float *)firbuf;
+        float *ns_hpfsmplp = &ns_hpfsmpl[chn][0];
+        i = 144;
+        __asm__ __volatile__ (
+            "1:							\n\t"
+            "movups		40(%8), %0		\n\t"
+            "xorps		%1, %1			\n\t"
+            "movaps		%0, %2			\n\t"
+            "unpcklps	%1, %0			\n\t"
+            "unpckhps	%1, %2			\n\t"
+            "movaps		%2, %1			\n\t"
+
+            "movaps		(%10), %2		\n\t"
+            "movups		(%8), %3		\n\t"
+            "movups		72(%8), %4		\n\t"
+            "shufps		$0x1b, %4, %4	\n\t"
+            "addps		%4, %3			\n\t"
+            "mulps		%3, %2			\n\t"
+            "movaps		16(%10), %5		\n\t"
+            "movups		16(%8), %3		\n\t"
+            "movups		56(%8), %4		\n\t"
+            "shufps		$0x1b, %4, %4	\n\t"
+            "addps		%4, %3			\n\t"
+            "mulps		%3, %5			\n\t"
+            "addps		%5, %2			\n\t"
+            "movaps		32(%10), %5		\n\t"
+            "movups		32(%8), %3		\n\t"
+            "movups		40(%8), %4		\n\t"
+            "shufps		$0x1b, %4, %4	\n\t"
+            "addps		%4, %3			\n\t"
+            "mulps		%3, %5			\n\t"
+            "addps		%5, %2			\n\t"
+            "movhlps	%2, %6			\n\t"
+            "addps		%2, %6			\n\t"
+#if defined(__x86_64__)
+            "addq		$4, %8			\n\t"
+#else
+            "addl		$4, %8			\n\t"
+#endif
+
+            "movaps		(%10), %2		\n\t"
+            "movups		(%8), %3		\n\t"
+            "movups		72(%8), %4		\n\t"
+            "shufps		$0x1b, %4, %4	\n\t"
+            "addps		%4, %3			\n\t"
+            "mulps		%3, %2			\n\t"
+            "movaps		16(%10), %5		\n\t"
+            "movups		16(%8), %3		\n\t"
+            "movups		56(%8), %4		\n\t"
+            "shufps		$0x1b, %4, %4	\n\t"
+            "addps		%4, %3			\n\t"
+            "mulps		%3, %5			\n\t"
+            "addps		%5, %2			\n\t"
+            "movaps		32(%10), %5		\n\t"
+            "movups		32(%8), %3		\n\t"
+            "movups		40(%8), %4		\n\t"
+            "shufps		$0x1b, %4, %4	\n\t"
+            "addps		%4, %3			\n\t"
+            "mulps		%3, %5			\n\t"
+            "addps		%5, %2			\n\t"
+            "movhlps	%2, %3			\n\t"
+            "addps		%3, %2			\n\t"
+            "movlhps	%2, %6			\n\t"
+            "addps		%6, %0			\n\t"
+#if defined(__x86_64__)
+            "addq		$4, %8			\n\t"
+#else
+            "addl		$4, %8			\n\t"
+#endif
+
+            "movaps		(%10), %2		\n\t"
+            "movups		(%8), %3		\n\t"
+            "movups		72(%8), %4		\n\t"
+            "shufps		$0x1b, %4, %4	\n\t"
+            "addps		%4, %3			\n\t"
+            "mulps		%3, %2			\n\t"
+            "movaps		16(%10), %5		\n\t"
+            "movups		16(%8), %3		\n\t"
+            "movups		56(%8), %4		\n\t"
+            "shufps		$0x1b, %4, %4	\n\t"
+            "addps		%4, %3			\n\t"
+            "mulps		%3, %5			\n\t"
+            "addps		%5, %2			\n\t"
+            "movaps		32(%10), %5		\n\t"
+            "movups		32(%8), %3		\n\t"
+            "movups		40(%8), %4		\n\t"
+            "shufps		$0x1b, %4, %4	\n\t"
+            "addps		%4, %3			\n\t"
+            "mulps		%3, %5			\n\t"
+            "addps		%5, %2			\n\t"
+            "movhlps	%2, %6			\n\t"
+            "addps		%2, %6			\n\t"
+#if defined(__x86_64__)
+            "addq		$4, %8			\n\t"
+#else
+            "addl		$4, %8			\n\t"
+#endif
+
+            "movaps		(%10), %2		\n\t"
+            "movups		(%8), %3		\n\t"
+            "movups		72(%8), %4		\n\t"
+            "shufps		$0x1b, %4, %4	\n\t"
+            "addps		%4, %3			\n\t"
+            "mulps		%3, %2			\n\t"
+            "movaps		16(%10), %5		\n\t"
+            "movups		16(%8), %3		\n\t"
+            "movups		56(%8), %4		\n\t"
+            "shufps		$0x1b, %4, %4	\n\t"
+            "addps		%4, %3			\n\t"
+            "mulps		%3, %5			\n\t"
+            "addps		%5, %2			\n\t"
+            "movaps		32(%10), %5		\n\t"
+            "movups		32(%8), %3		\n\t"
+            "movups		40(%8), %4		\n\t"
+            "shufps		$0x1b, %4, %4	\n\t"
+            "addps		%4, %3			\n\t"
+            "mulps		%3, %5			\n\t"
+            "addps		%5, %2			\n\t"
+            "movhlps	%2, %3			\n\t"
+            "addps		%3, %2			\n\t"
+            "movlhps	%2, %6			\n\t"
+            "addps		%6, %1			\n\t"
+#if defined(__x86_64__)
+            "addq		$4, %8			\n\t"
+#else
+            "addl		$4, %8			\n\t"
+#endif
+
+#if defined(__SSE3__)
+            "haddps		%1, %0			\n\t"
+#else
+            "movaps		%0, %2			\n\t"
+            "movaps		%1, %3			\n\t"
+            "shufps		$0x31, %2, %2	\n\t"
+            "shufps		$0x31, %3, %3	\n\t"
+            "addps		%2, %0			\n\t"
+            "addps		%3, %1			\n\t"
+            "shufps		$0x88, %1, %0	\n\t"
+#endif
+            "movaps		%0, (%9)		\n\t"
+
+#if defined(__x86_64__)
+            "addq		$16, %9			\n\t"
+#else
+            "addl		$16, %9			\n\t"
+#endif
+            "decl		%7				\n\t"
+            "jnz		1b				\n\t"
+            : "=x" (v1), "=x" (v2), "=x" (v3), "=x" (v4), "=x" (v5), "=x" (v6), "=x" (v7),
+              "+r" (i), "+r" (firbufp), "+r" (ns_hpfsmplp)
+            : "r" (fircoef)
+            : "memory"
+        );
+#else
         for (i = 0; i < 576; i++) {
             FLOAT   sum1, sum2;
             sum1 = firbuf[i + 10];
@@ -803,6 +1123,7 @@ vbrpsy_attack_detection(lame_internal_flags * gfc, const sample_t * const buffer
             }
             ns_hpfsmpl[chn][i] = sum1 + sum2;
         }
+#endif
         masking_ratio[gr_out][chn].en = psv->en[chn];
         masking_ratio[gr_out][chn].thm = psv->thm[chn];
         if (n_chn_psy > 2) {
@@ -1423,10 +1744,10 @@ L3psycho_anal_vbr(lame_internal_flags * gfc,
     /* fft and energy calculation   */
     FLOAT(*wsamp_l)[BLKSIZE];
     FLOAT(*wsamp_s)[3][BLKSIZE_s];
-    FLOAT   fftenergy[HBLKSIZE];
-    FLOAT   fftenergy_s[3][HBLKSIZE_s];
-    FLOAT   wsamp_L[2][BLKSIZE];
-    FLOAT   wsamp_S[2][3][BLKSIZE_s];
+    FLOAT   fftenergy[HBLKSIZE] __attribute__ ((aligned (16)));
+    FLOAT   fftenergy_s[3][HBLKSIZE_s] __attribute__ ((aligned (16)));
+    FLOAT   wsamp_L[2][BLKSIZE] __attribute__ ((aligned (16)));
+    FLOAT   wsamp_S[2][3][BLKSIZE_s] __attribute__ ((aligned (16)));
     FLOAT   eb[4][CBANDS], thr[4][CBANDS];
 
     FLOAT   sub_short_factor[4][3];

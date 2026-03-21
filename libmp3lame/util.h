@@ -116,6 +116,36 @@ extern  "C" {
     typedef struct plotting_data plotting_data;
 #endif
 
+#if defined(__APPLE__)
+#define malloc_aligned16(size) malloc(size)
+#define calloc_aligned16(n, size) calloc(n, size)
+#define free_aligned16(ptr) free(ptr)
+#elif defined(__MINGW32__) || defined(__MINGW64__) || defined(_MSC_VER)
+#define malloc_aligned16(size) _aligned_malloc(size, 16)
+static inline void * calloc_aligned16(size_t n, size_t size)
+{
+    void *ptr = _aligned_malloc(n * size, 16);
+    if(ptr) memset(ptr, 0, n * size);
+    return ptr;
+}
+#define free_aligned16(ptr) _aligned_free(ptr)
+#else
+static inline void * malloc_aligned16(size_t size)
+{
+    void *ptr;
+    int ret = posix_memalign(&ptr, 16, size);
+    return ret == 0 ? ptr : NULL;
+}
+static inline void * calloc_aligned16(size_t n, size_t size)
+{
+    void *ptr;
+    int ret = posix_memalign(&ptr, 16, n * size);
+    if(!ret) memset(ptr, 0, n * size);
+    return ret == 0 ? ptr : NULL;
+}
+#define free_aligned16(ptr) free(ptr)
+#endif
+
 /***********************************************************************
 *
 *  Global Type Definitions
@@ -178,7 +208,7 @@ extern  "C" {
         FLOAT   psfb12[PSFB12]; /* ATH for partitionned sfb12 in short blocks */
         FLOAT   cb_l[CBANDS]; /* ATH for long block convolution bands */
         FLOAT   cb_s[CBANDS]; /* ATH for short block convolution bands */
-        FLOAT   eql_w[BLKSIZE / 2]; /* equal loudness weights (based on ATH) */
+        FLOAT   eql_w[BLKSIZE / 2] __attribute__ ((aligned (16))); /* equal loudness weights (based on ATH) */
     } ATH_t;
 
     /**
@@ -492,7 +522,7 @@ extern  "C" {
 
         /* variables used by lame.c */
         Bit_stream_struc bs;
-        III_side_info_t l3_side;
+        III_side_info_t l3_side __attribute__ ((aligned (16)));
 
         scalefac_struct scalefac_band;
 

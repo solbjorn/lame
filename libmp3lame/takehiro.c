@@ -26,6 +26,7 @@
 # include <config.h>
 #endif
 
+#undef TAKEHIRO_IEEE754_HACK
 
 #include "lame.h"
 #include "machine.h"
@@ -34,6 +35,9 @@
 #include "quantize_pvt.h"
 #include "tables.h"
 
+#if (defined(__GNUC__) || defined(__clang__)) && (defined(__i386__) || defined(__x86_64__))
+#include <xmmintrin.h>
+#endif
 
 static const struct {
     const int region0_count;
@@ -229,6 +233,57 @@ quantize_lines_xrpow(unsigned int l, FLOAT istep, const FLOAT * xr, int *ix)
     l = l >> 1;
     remaining = l % 2;
     l = l >> 1;
+#if (defined(__GNUC__) || defined(__clang__)) && (defined(__i386__) || defined(__x86_64__))
+    __m128 v1, v2, v3, v4, v5, v6;
+    v6 = _mm_set_ss(istep);
+#if defined(_WIN64)
+    long long tmp;
+#else
+    long tmp;
+#endif
+    __asm__ __volatile__ (
+        "testl		%6, %6				\n\t"
+        "jz			2f					\n\t"
+        "shufps		$0x00, %5, %5		\n\t"
+        "1:								\n\t"
+        "movups		(%7), %0			\n\t"
+        "mulps		%5, %0				\n\t"
+
+        "cvttss2si	%0, %9				\n\t"
+        "movaps		%0, %1				\n\t"
+        "shufps		$0xe5, %1, %1		\n\t"
+        "movss		(%10,%9,4), %2		\n\t"
+        "cvttss2si	%1, %9				\n\t"
+        "movhlps	%1, %1				\n\t"
+        "movss		(%10,%9,4), %3		\n\t"
+        "cvttss2si	%1, %9				\n\t"
+        "shufps		$0x55, %1, %1		\n\t"
+        "movss		(%10,%9,4), %4		\n\t"
+        "cvttss2si	%1, %9				\n\t"
+        "movlhps	%3, %2				\n\t"
+        "movss		(%10,%9,4), %3		\n\t"
+        "movlhps	%3, %4				\n\t"
+        "shufps		$0x88, %4, %2		\n\t"
+        "addps		%2, %0				\n\t"
+        "cvttps2dq	%0, %0				\n\t"
+        "movups		%0, (%8)			\n\t"
+
+#if defined(__x86_64__)
+        "addq		$16, %7				\n\t"
+        "addq		$16, %8				\n\t"
+#else
+        "addl		$16, %7				\n\t"
+        "addl		$16, %8				\n\t"
+#endif
+        "decl		%6					\n\t"
+        "jnz		1b					\n\t"
+        "2:								\n\t"
+        : "=x" (v1), "=x" (v2), "=x" (v3), "=x" (v4), "=x" (v5), "+x" (v6),
+          "+r" (l), "+r" (xr), "+r" (ix), "=&r" (tmp)
+        : "r" (adj43)
+        : "memory"
+    );
+#else
     while (l--) {
         FLOAT   x0, x1, x2, x3;
         int     rx0, rx1, rx2, rx3;
@@ -250,6 +305,7 @@ quantize_lines_xrpow(unsigned int l, FLOAT istep, const FLOAT * xr, int *ix)
         XRPOW_FTOI(x2, *ix++);
         XRPOW_FTOI(x3, *ix++);
     };
+#endif
     if (remaining) {
         FLOAT   x0, x1;
         int     rx0, rx1;
@@ -423,6 +479,80 @@ quantize_xrpow(const FLOAT * xp, int *pi, FLOAT istep, gr_info const *const cod_
 static int
 ix_max(const int *ix, const int *end)
 {
+#if (defined(__GNUC__) || defined(__clang__)) && (defined(__i386__) || defined(__x86_64__))
+    __m128 v1, v2, v3;
+    int max;
+    __asm__ __volatile__ (
+        "pxor		%2, %2			\n\t"
+#if defined(__x86_64__)
+        "subq		$8, %4			\n\t"
+        "cmpq		%4, %3			\n\t"
+#else
+        "subl		$8, %4			\n\t"
+        "cmpl		%4, %3			\n\t"
+#endif
+        "je			2f				\n\t"
+        "1:							\n\t"
+        "movups		(%3), %0		\n\t"
+#if defined(__SSE4_1__)
+        "pmaxud		%0, %2			\n\t"
+#else
+        "movdqa		%2, %1			\n\t"
+        "pcmpgtd	%0, %2			\n\t"
+        "pand		%2, %1			\n\t"
+        "pandn		%0, %2			\n\t"
+        "por		%1, %2			\n\t"
+#endif
+#if defined(__x86_64__)
+        "addq		$16, %3			\n\t"
+        "cmpq		%4, %3			\n\t"
+#else
+        "addl		$16, %3			\n\t"
+        "cmpl		%4, %3			\n\t"
+#endif
+        "jl			1b				\n\t"
+        "jne		3f				\n\t"
+        "2:							\n\t"
+        "movq		(%3), %0		\n\t"
+#if defined(__SSE4_1__)
+        "pmaxud		%0, %2			\n\t"
+#else
+        "movdqa		%2, %1			\n\t"
+        "pcmpgtd	%0, %2			\n\t"
+        "pand		%2, %1			\n\t"
+        "pandn		%0, %2			\n\t"
+        "por		%1, %2			\n\t"
+#endif
+        "3:							\n\t"
+#if defined(__SSE4_1__)
+        "movdqa		%2, %0			\n\t"
+        "psrldq		$8, %2			\n\t"
+        "pmaxud		%0, %2			\n\t"
+        "movdqa		%2, %0			\n\t"
+        "psrldq		$4, %2			\n\t"
+        "pmaxud		%2, %0			\n\t"
+#else
+        "movdqa		%2, %0			\n\t"
+        "movdqa		%2, %1			\n\t"
+        "psrldq		$8, %2			\n\t"
+        "pcmpgtd	%2, %0			\n\t"
+        "pand		%0, %1			\n\t"
+        "pandn		%2, %0			\n\t"
+        "por		%1, %0			\n\t"
+        "movdqa		%0, %2			\n\t"
+        "movdqa		%0, %1			\n\t"
+        "psrldq		$4, %2			\n\t"
+        "pcmpgtd	%2, %0			\n\t"
+        "pand		%0, %1			\n\t"
+        "pandn		%2, %0			\n\t"
+        "por		%1, %0			\n\t"
+#endif
+        "movd		%0, %5			\n\t"
+        : "=x" (v1), "=x" (v2), "=x" (v3),
+          "+r" (ix), "+r" (end), "=r" (max)
+    );
+    return max;
+#else
     int     max1 = 0, max2 = 0;
 
     do {
@@ -437,6 +567,7 @@ ix_max(const int *ix, const int *end)
     if (max1 < max2)
         max1 = max2;
     return max1;
+#endif
 }
 
 
@@ -447,12 +578,74 @@ ix_max(const int *ix, const int *end)
 
 
 static int
-count_bit_ESC(const int *ix, const int *const end, int t1, const int t2, unsigned int *const s)
+count_bit_ESC(const int *ix, const int *end, int t1, const int t2, unsigned int *const s)
 {
     /* ESC-table is used */
     unsigned int const linbits = ht[t1].xlen * 65536u + ht[t2].xlen;
     unsigned int sum = 0, sum2;
 
+#if (defined(__GNUC__) || defined(__clang__)) && (defined(__x86_64__))
+    unsigned int tmp;
+    static short mult[8] __attribute__ ((aligned (16))) = {16, 1, 16, 1, 16, 1, 16, 1};
+    __asm__ __volatile__ (
+        "movaps		(%6), %%xmm4			\n\t"
+        "pcmpeqd	%%xmm2, %%xmm2			\n\t"
+        "movdqa		%%xmm2, %%xmm3			\n\t"
+        "psrlw		$13, %%xmm2				\n\t"
+        "psllw		$4, %%xmm3				\n\t"
+        "psllw		$1, %%xmm2				\n\t"
+        "pxor		%%xmm5, %%xmm5			\n\t"
+        "subq		$8, %3					\n\t"
+        "cmpq		%3, %0					\n\t"
+        "je			2f						\n\t"
+
+        "1:									\n\t"
+        "movups		(%0), %%xmm0			\n\t"
+        "packssdw	%%xmm0, %%xmm0			\n\t"
+        "movdqa		%%xmm0, %%xmm1			\n\t"
+        "paddusw	%%xmm3, %%xmm1			\n\t"
+        "pcmpgtw	%%xmm2, %%xmm0			\n\t"
+        "psubw		%%xmm0, %%xmm5			\n\t"
+        "pmaddwd	%%xmm4, %%xmm1			\n\t"
+        "movd		%%xmm1, %2				\n\t"
+        "psrlq		$32, %%xmm1				\n\t"
+        "cltq								\n\t"
+        "addl		1088(%5,%%rax,4), %1	\n\t"
+        "movd		%%xmm1, %2				\n\t"
+        "cltq								\n\t"
+        "addl		1088(%5,%%rax,4), %1	\n\t"
+        "addq		$16, %0					\n\t"
+        "cmpq		%3, %0					\n\t"
+        "jl			1b						\n\t"
+        "movdqa		%%xmm5, %%xmm0			\n\t"
+        "psrlq		$32, %%xmm0				\n\t"
+        "paddw		%%xmm0, %%xmm5			\n\t"
+        "jne		3f						\n\t"
+
+        "2:									\n\t"
+        "movq		(%0), %%xmm0			\n\t"
+        "packssdw	%%xmm0, %%xmm0			\n\t"
+        "movdqa		%%xmm0, %%xmm1			\n\t"
+        "paddusw	%%xmm3, %%xmm1			\n\t"
+        "pcmpgtw	%%xmm2, %%xmm0			\n\t"
+        "psubw		%%xmm0, %%xmm5			\n\t"
+        "pmaddwd	%%xmm4, %%xmm1			\n\t"
+        "movd		%%xmm1, %2				\n\t"
+        "cltq								\n\t"
+        "addl		1088(%5,%%rax,4), %1	\n\t"
+
+        "3:									\n\t"
+        "movdqa		%%xmm5, %%xmm0			\n\t"
+        "psrld		$16, %%xmm0				\n\t"
+        "paddw		%%xmm5, %%xmm0			\n\t"
+        "pextrw		$0, %%xmm0, %2			\n\t"
+        "imull		%4, %2					\n\t"
+        "addl		%2, %1					\n\t"
+        : "+r" (ix), "+r" (sum), "=&a" (tmp), "+r" (end)
+        : "r" (linbits), "r" (largetbl), "r" (mult)
+        : "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5"
+    );
+#else
     do {
         unsigned int x = *ix++;
         unsigned int y = *ix++;
@@ -469,6 +662,7 @@ count_bit_ESC(const int *ix, const int *const end, int t1, const int t2, unsigne
         x += y;
         sum += largetbl[x];
     } while (ix < end);
+#endif
 
     sum2 = sum & 0xffffu;
     sum >>= 16u;
@@ -790,10 +984,178 @@ count_bits(lame_internal_flags const *const gfc,
                 j += width;
             }
             else {
+#if (defined(__GNUC__) || defined(__clang__)) && (defined(__i386__) || defined(__x86_64__))
+                __m128 v1, v2, v3, v4, v5;
+#if defined(__x86_64__)
+#if defined(_WIN64)
+                long long k = j;
+#else
+                long k = j;
+#endif
+                j += width;
+#if defined(_WIN64)
+                long long l = j;
+#else
+                long l = j;
+#endif
+                v1 = _mm_set_ss(roundfac);
+                __asm__ __volatile__ (
+                    "shufps		$0x00, %0, %0	\n\t"
+
+                    "testq		$0x3, %5		\n\t"
+                    "jz			7f				\n\t"
+                    "cmpq		%6, %5			\n\t"
+                    "je			6f				\n\t"
+                    "8:							\n\t"
+                    "movss		(%7,%5,4), %1	\n\t"
+                    "cmpnltss	%0, %1			\n\t"
+                    "movss		(%8,%5,4), %2	\n\t"
+                    "andps		%2, %1			\n\t"
+                    "movss		%1, (%8,%5,4)	\n\t"
+                    "incq		%5				\n\t"
+                    "testq		$0x3, %5		\n\t"
+                    "jz			7f				\n\t"
+                    "cmpq		%6, %5			\n\t"
+                    "jne		8b				\n\t"
+                    "7:							\n\t"
+
+                    "subq		$8, %6			\n\t"
+                    "cmpq		%6, %5			\n\t"
+                    "jg			2f				\n\t"
+                    "1:							\n\t"
+                    "movaps		(%7,%5,4), %1	\n\t"
+                    "movaps		16(%7,%5,4), %2	\n\t"
+                    "cmpnltps	%0, %1			\n\t"
+                    "cmpnltps	%0, %2			\n\t"
+                    "movaps		(%8,%5,4), %3	\n\t"
+                    "movaps		16(%8,%5,4), %4	\n\t"
+                    "andps		%3, %1			\n\t"
+                    "andps		%4, %2			\n\t"
+                    "movaps		%1, (%8,%5,4)	\n\t"
+                    "movaps		%2, 16(%8,%5,4)	\n\t"
+                    "addq		$8, %5			\n\t"
+                    "cmpq		%6, %5			\n\t"
+                    "jle		1b				\n\t"
+                    "2:							\n\t"
+                    "addq		$8, %6			\n\t"
+                    "cmpq		%6, %5			\n\t"
+                    "je			6f				\n\t"
+
+                    "subq		$4, %6			\n\t"
+                    "cmpq		%6, %5			\n\t"
+                    "jg			4f				\n\t"
+                    "3:							\n\t"
+                    "movaps		(%7,%5,4), %1	\n\t"
+                    "cmpnltps	%0, %1			\n\t"
+                    "movaps		(%8,%5,4), %2	\n\t"
+                    "andps		%2, %1			\n\t"
+                    "movaps		%1, (%8,%5,4)	\n\t"
+                    "addq		$4, %5			\n\t"
+                    "cmpq		%6, %5			\n\t"
+                    "jle		3b				\n\t"
+                    "4:							\n\t"
+                    "addq		$4, %6			\n\t"
+                    "cmpq		%6, %5			\n\t"
+                    "je			6f				\n\t"
+
+                    "5:							\n\t"
+                    "movss		(%7,%5,4), %1	\n\t"
+                    "cmpnltss	%0, %1			\n\t"
+                    "movss		(%8,%5,4), %2	\n\t"
+                    "andps		%2, %1			\n\t"
+                    "movss		%1, (%8,%5,4)	\n\t"
+                    "incq		%5				\n\t"
+                    "cmpq		%6, %5			\n\t"
+                    "jne		5b				\n\t"
+                    "6:							\n\t"
+                    : "+x" (v1), "=x" (v2), "=x" (v3), "=x" (v4), "=x" (v5),
+                      "+r" (k), "+r" (l)
+                    : "r" (xr), "r" (ix)
+                );
+#else
+                int k = j;
+                j += width;
+                v1 = _mm_set_ss(roundfac);
+                __asm__ __volatile__ (
+                    "shufps		$0x00, %0, %0	\n\t"
+
+                    "testl		$0x3, %5		\n\t"
+                    "jz			7f				\n\t"
+                    "cmpl		%6, %5			\n\t"
+                    "je			6f				\n\t"
+                    "8:							\n\t"
+                    "movss		(%7,%5,4), %1	\n\t"
+                    "cmpnltss	%0, %1			\n\t"
+                    "movss		(%8,%5,4), %2	\n\t"
+                    "andps		%2, %1			\n\t"
+                    "movss		%1, (%8,%5,4)	\n\t"
+                    "incl		%5				\n\t"
+                    "testl		$0x3, %5		\n\t"
+                    "jz			7f				\n\t"
+                    "cmpl		%6, %5			\n\t"
+                    "jne		8b				\n\t"
+                    "7:							\n\t"
+
+                    "subl		$8, %6			\n\t"
+                    "cmpl		%6, %5			\n\t"
+                    "jg			2f				\n\t"
+                    "1:							\n\t"
+                    "movaps		(%7,%5,4), %1	\n\t"
+                    "movaps		16(%7,%5,4), %2	\n\t"
+                    "cmpnltps	%0, %1			\n\t"
+                    "cmpnltps	%0, %2			\n\t"
+                    "movaps		(%8,%5,4), %3	\n\t"
+                    "movaps		16(%8,%5,4), %4	\n\t"
+                    "andps		%3, %1			\n\t"
+                    "andps		%4, %2			\n\t"
+                    "movaps		%1, (%8,%5,4)	\n\t"
+                    "movaps		%2, 16(%8,%5,4)	\n\t"
+                    "addl		$8, %5			\n\t"
+                    "cmpl		%6, %5			\n\t"
+                    "jle		1b				\n\t"
+                    "2:							\n\t"
+                    "addl		$8, %6			\n\t"
+                    "cmpl		%6, %5			\n\t"
+                    "je			6f				\n\t"
+
+                    "subl		$4, %6			\n\t"
+                    "cmpl		%6, %5			\n\t"
+                    "jg			4f				\n\t"
+                    "3:							\n\t"
+                    "movaps		(%7,%5,4), %1	\n\t"
+                    "cmpnltps	%0, %1			\n\t"
+                    "movaps		(%8,%5,4), %2	\n\t"
+                    "andps		%2, %1			\n\t"
+                    "movaps		%1, (%8,%5,4)	\n\t"
+                    "addl		$4, %5			\n\t"
+                    "cmpl		%6, %5			\n\t"
+                    "jle		3b				\n\t"
+                    "4:							\n\t"
+                    "addl		$4, %6			\n\t"
+                    "cmpl		%6, %5			\n\t"
+                    "je			6f				\n\t"
+
+                    "5:							\n\t"
+                    "movss		(%7,%5,4), %1	\n\t"
+                    "cmpnltss	%0, %1			\n\t"
+                    "movss		(%8,%5,4), %2	\n\t"
+                    "andps		%2, %1			\n\t"
+                    "movss		%1, (%8,%5,4)	\n\t"
+                    "incl		%5				\n\t"
+                    "cmpl		%6, %5			\n\t"
+                    "jne		5b				\n\t"
+                    "6:							\n\t"
+                    : "+x" (v1), "=x" (v2), "=x" (v3), "=x" (v4), "=x" (v5),
+                      "+r" (k), "+r" (j)
+                    : "r" (xr), "r" (ix)
+                );
+#endif
+#else
                 int     k;
                 for (k = j, j += width; k < j; ++k) {
                     ix[k] = (xr[k] >= roundfac) ? ix[k] : 0;
                 }
+#endif
             }
         }
     }
