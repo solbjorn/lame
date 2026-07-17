@@ -1,0 +1,60 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <!-- Base directories a build matrix redirects per cell, so that
+         configurations built from one source tree keep their own objects
+         and program databases. -->
+    <OutDirBase Condition="'$(OutDirBase)'==''">$(SolutionDir)..\output\</OutDirBase>
+    <IntDirBase Condition="'$(IntDirBase)'==''">$(SolutionDir)..\obj\</IntDirBase>
+    <OutDir>$(OutDirBase)$(Platform)\$(Configuration)\</OutDir>
+    <IntDir>$(IntDirBase)$(Platform)\$(Configuration)\$(ProjectName)\</IntDir>
+    <LinkIncremental>false</LinkIncremental>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(IntDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;_CRT_SECURE_NO_WARNINGS;_CRT_SECURE_NO_DEPRECATED;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <StringPooling>true</StringPooling>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
+      <BrowseInformation>true</BrowseInformation>
+      <WarningLevel>Level4</WarningLevel>
+      <DisableSpecificWarnings>4995;4996;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <!-- Security hardening (hardcoded for current MSVC; there is no
+           configure step on Windows):
+             ControlFlowGuard  = /guard:cf, indirect-call integrity
+             BufferSecurityCheck = /GS, stack buffer-overflow cookies -->
+      <ControlFlowGuard>Guard</ControlFlowGuard>
+      <BufferSecurityCheck>true</BufferSecurityCheck>
+    </ClCompile>
+    <PreBuildEvent>
+      <Command>if not exist "$(IntDir)" mkdir "$(IntDir)"
+copy /Y "$(ProjectDir)..\configMS.h" "$(IntDir)config.h" &gt; NUL</Command>
+    </PreBuildEvent>
+    <Link>
+      <AdditionalLibraryDirectories>$(OutDir);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <ProgramDatabaseFile>$(OutDir)$(TargetName).pdb</ProgramDatabaseFile>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <OptimizeReferences>true</OptimizeReferences>
+      <!-- Security hardening:
+             RandomizedBaseAddress   = /DYNAMICBASE, ASLR
+             DataExecutionPrevention = /NXCOMPAT, DEP -->
+      <RandomizedBaseAddress>true</RandomizedBaseAddress>
+      <DataExecutionPrevention>true</DataExecutionPrevention>
+    </Link>
+  </ItemDefinitionGroup>
+  <!-- x64-only hardening (these options do not apply to 32-bit targets):
+         GuardEHContMetadata = /guard:ehcont, EH continuation metadata
+         CETCompat           = /CETCOMPAT, CET hardware shadow-stack support
+       64-bit high-entropy ASLR (/HIGHENTROPYVA) is already the linker
+       default for x64 images. -->
+  <ItemDefinitionGroup Condition="'$(Platform)'=='x64'">
+    <ClCompile>
+      <GuardEHContMetadata>true</GuardEHContMetadata>
+    </ClCompile>
+    <Link>
+      <CETCompat>true</CETCompat>
+    </Link>
+  </ItemDefinitionGroup>
+</Project>

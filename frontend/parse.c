@@ -402,40 +402,44 @@ static int getIntValue(char const* token, char const* arg, int* ptr)
 }
 
 #ifdef ID3TAGS_EXTENDED
+/* Set an ID3v2 tag field from UTF-16 data. The data pointer is genuinely
+   UTF-16 here, so the UTF-16 id3tag_* setters are used throughout. */
 static int
-set_id3v2tag(lame_global_flags* gfp, TextEncoding enc, int type, unsigned short const* str)
+set_id3v2tag_utf16(lame_global_flags* gfp, int type, unsigned short const* str)
 {
-    switch (enc)
+    switch (type)
     {
-        case TENC_UTF8:
-            switch (type)
-            {
-                case 'a': return id3tag_set_textinfo_utf8(gfp, "TPE1", str);
-                case 't': return id3tag_set_textinfo_utf8(gfp, "TIT2", str);
-                case 'l': return id3tag_set_textinfo_utf8(gfp, "TALB", str);
-                case 'g': return id3tag_set_textinfo_utf8(gfp, "TCON", str);
-                case 'c': return id3tag_set_comment_ucs2(gfp, 0, 0, str);
-                case 'n': return id3tag_set_textinfo_utf8(gfp, "TRCK", str);
-                case 'y': return id3tag_set_textinfo_utf8(gfp, "TYER", str);
-                case 'v': return id3tag_set_fieldvalue_ucs2(gfp, str);
-            }
-            ;;
-        case TENC_UTF16:
-            switch (type)
-            {
-                case 'a': return id3tag_set_textinfo_utf16(gfp, "TPE1", str);
-                case 't': return id3tag_set_textinfo_utf16(gfp, "TIT2", str);
-                case 'l': return id3tag_set_textinfo_utf16(gfp, "TALB", str);
-                case 'g': return id3tag_set_textinfo_utf16(gfp, "TCON", str);
-                case 'c': return id3tag_set_comment_utf16(gfp, 0, 0, str);
-                case 'n': return id3tag_set_textinfo_utf16(gfp, "TRCK", str);
-                case 'y': return id3tag_set_textinfo_utf16(gfp, "TYER", str);
-                case 'v': return id3tag_set_fieldvalue_utf16(gfp, str);
-            }
-            ;;
-        default:
-            return -3;
+        case 'a': return id3tag_set_textinfo_utf16(gfp, "TPE1", str);
+        case 't': return id3tag_set_textinfo_utf16(gfp, "TIT2", str);
+        case 'l': return id3tag_set_textinfo_utf16(gfp, "TALB", str);
+        case 'g': return id3tag_set_textinfo_utf16(gfp, "TCON", str);
+        case 'c': return id3tag_set_comment_utf16(gfp, 0, 0, str);
+        case 'n': return id3tag_set_textinfo_utf16(gfp, "TRCK", str);
+        case 'y': return id3tag_set_textinfo_utf16(gfp, "TYER", str);
+        case 'v': return id3tag_set_fieldvalue_utf16(gfp, str);
     }
+    return -3;
+}
+
+/* Set an ID3v2 tag field from UTF-8 data. The data pointer is a UTF-8 char
+   string (not UTF-16 as the old, mistyped single handler assumed), so the
+   UTF-8 id3tag_* setters are used - including id3tag_set_fieldvalue_utf8 for
+   'v', which replaces the removed *_ucs2 calls the UTF-8 path used to make. */
+static int
+set_id3v2tag_utf8(lame_global_flags* gfp, int type, char const* str)
+{
+    switch (type)
+    {
+        case 'a': return id3tag_set_textinfo_utf8(gfp, "TPE1", str);
+        case 't': return id3tag_set_textinfo_utf8(gfp, "TIT2", str);
+        case 'l': return id3tag_set_textinfo_utf8(gfp, "TALB", str);
+        case 'g': return id3tag_set_textinfo_utf8(gfp, "TCON", str);
+        case 'c': return id3tag_set_comment_utf8(gfp, 0, 0, str);
+        case 'n': return id3tag_set_textinfo_utf8(gfp, "TRCK", str);
+        case 'y': return id3tag_set_textinfo_utf8(gfp, "TYER", str);
+        case 'v': return id3tag_set_fieldvalue_utf8(gfp, str);
+    }
+    return -3;
 }
 #endif
 
@@ -480,8 +484,8 @@ id3_tag(lame_global_flags* gfp, int type, TextEncoding enc, char* str)
         default:
 #ifdef ID3TAGS_EXTENDED
         case TENC_LATIN1: result = set_id3tag(gfp, type, x);   break;
-        case TENC_UTF16:  result = set_id3v2tag(gfp, enc, type, x); break;
-        case TENC_UTF8:   result = set_id3v2tag(gfp, enc, type, x); break;
+        case TENC_UTF16:  result = set_id3v2tag_utf16(gfp, type, x); break;
+        case TENC_UTF8:   result = set_id3v2tag_utf8(gfp, type, x);  break;
 #else
         case TENC_RAW:    result = set_id3tag(gfp, type, x);   break;
 #endif
@@ -1598,6 +1602,35 @@ static int dev_only_without_arg(char const* str, char const* token, int* argIgno
                            } else if (dev_only_with_arg(str,token,nextArg,&argIgnored,&argUsed)) {
 
 
+/**
+ * Copy a positional input/output filename argument into a fixed PATH_MAX+1
+ * byte buffer, always null-terminating the result.
+ *
+ * A source of PATH_MAX bytes or longer is rejected rather than copied, so the
+ * destination is never left unterminated for a later unbounded string scan.
+ *
+ * @param src  NUL-terminated source filename.
+ * @param dst  destination buffer of at least PATH_MAX+1 bytes; on success it
+ *             holds a null-terminated copy of @p src, on failure it is left
+ *             unchanged.
+ * @return 0 on success, or -1 if @p src is PATH_MAX bytes or longer (an error
+ *         naming the offending file is printed).
+ */
+static int
+set_path_arg(char const *const src, char *const dst)
+{
+    int const arg_n = strnlen(src, PATH_MAX);
+    if (arg_n >= PATH_MAX) {
+        error_printf("input/output file name too long (limit %d): %s\n",
+                     PATH_MAX, src);
+        return -1;
+    }
+    strncpy(dst, src, PATH_MAX);
+    dst[PATH_MAX] = '\0';
+    return 0;
+}
+
+
 static int
 parse_args_(lame_global_flags * gfp, int argc, char **argv,
            char *const inPath, char *const outPath, char **nogap_inPath, int *num_nogap)
@@ -1619,7 +1652,7 @@ parse_args_(lame_global_flags * gfp, int argc, char **argv,
     enum TextEncoding id3_tenc = TENC_LATIN1;
 #endif
 
-#ifdef HAVE_LANGINFO_H
+#if defined(HAVE_ICONV) && defined(HAVE_LANGINFO_H)
     setlocale(LC_CTYPE, "");
 #endif
     inPath[0] = '\0';
@@ -2529,7 +2562,9 @@ parse_args_(lame_global_flags * gfp, int argc, char **argv,
         else {
             if (nogap) {
                 if ((num_nogap != NULL) && (count_nogap < *num_nogap)) {
-                    strncpy(nogap_inPath[count_nogap++], argv[i], PATH_MAX + 1);
+                    if (set_path_arg(argv[i], nogap_inPath[count_nogap]) < 0)
+                        return -1;
+                    ++count_nogap;
                     input_file = 1;
                 }
                 else {
@@ -2547,12 +2582,15 @@ parse_args_(lame_global_flags * gfp, int argc, char **argv,
                 /* normal options:   inputfile  [outputfile], and
                    either one can be a '-' for stdin/stdout */
                 if (inPath[0] == '\0') {
-                    strncpy(inPath, argv[i], PATH_MAX + 1);
+                    if (set_path_arg(argv[i], inPath) < 0)
+                        return -1;
                     input_file = 1;
                 }
                 else {
-                    if (outPath[0] == '\0')
-                        strncpy(outPath, argv[i], PATH_MAX + 1);
+                    if (outPath[0] == '\0') {
+                        if (set_path_arg(argv[i], outPath) < 0)
+                            return -1;
+                    }
                     else {
                         error_printf("%s: excess arg %s\n", ProgramName, argv[i]);
                         return -1;
@@ -2690,6 +2728,7 @@ static int
 merge_argv(int argc, char** argv, int str_argc, char** str_argv, int N)
 {
     int     i;
+    int     merged;
     if (argc > 0) {
         str_argv[0] = argv[0];
         if (str_argc < 1) str_argc = 1;
@@ -2700,7 +2739,14 @@ merge_argv(int argc, char** argv, int str_argc, char** str_argv, int N)
             str_argv[j] = argv[i];
         }
     }
-    return argc + str_argc - 1;
+    merged = argc + str_argc - 1;
+    /* The write loop skips any slot >= N, so never report more entries than
+       the array actually holds.  parse_args() sizes str_argv to fit, but clamp
+       here as well so this helper can never hand back a count that runs past
+       its own buffer. */
+    if (merged > N)
+        merged = N;
+    return merged;
 }
 
 #ifdef DEBUG
@@ -2717,15 +2763,29 @@ dump_argv(int argc, char** argv)
 
 int parse_args(lame_t gfp, int argc, char **argv, char *const inPath, char *const outPath, char **nogap_inPath, int *num_nogap)
 {
-    char   *str_argv[512], *str;
+    char  **str_argv, *str;
     int     str_argc, ret;
+    size_t  n;
+
     str = lame_getenv("LAMEOPT");
-    str_argc = string_to_argv(str, str_argv, dimension_of(str_argv));
-    str_argc = merge_argv(argc, argv, str_argc, str_argv, dimension_of(str_argv));
+    /* Size the merged argument vector to actually fit: at worst every byte of
+       LAMEOPT begins a new token, the real argv contributes argc entries, plus
+       one for argv[0].  argc and the environment are both bounded by the OS
+       ARG_MAX, so n stays well within range. */
+    n = (size_t) argc + (str != 0 ? strlen(str) : 0) + 1;
+    str_argv = malloc(n * sizeof(*str_argv));
+    if (str_argv == 0) {
+        error_printf("out of memory while parsing the command line\n");
+        free(str);
+        return -1;
+    }
+    str_argc = string_to_argv(str, str_argv, (int) n);
+    str_argc = merge_argv(argc, argv, str_argc, str_argv, (int) n);
 #ifdef DEBUG
     dump_argv(str_argc, str_argv);
 #endif
     ret = parse_args_(gfp, str_argc, str_argv, inPath, outPath, nogap_inPath, num_nogap);
+    free(str_argv);
     free(str);
     return ret;
 }

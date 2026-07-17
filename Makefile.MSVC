@@ -35,6 +35,14 @@
 
 
 
+#	srcdir selects in-tree (default ".") or out-of-tree builds: pass
+#	srcdir=<path-to-sources> and run nmake from an empty build directory to
+#	build outside the source tree, and the intermediate files land in the
+#	build directory instead of next to the sources.
+!	IF "$(srcdir)" == ""
+srcdir = .
+!	ENDIF
+
 #	targets <-> DOS filenames
 
 T_LAME = lame.exe
@@ -91,7 +99,7 @@ WARN = OFF
 !	ENDIF
 
 !	IF "$(PREC)" == ""
-PREC = SINGLE
+PREC = DOUBLE
 !	ENDIF
 
 !	IF "$(SNDFILE)" == ""
@@ -204,13 +212,13 @@ LIB_OPTS = /nologo $(MACHINE)
 
 # release options
 !	IF "$(MSVCVER)" == "Win64"
-CC_OPTS = /nologo /DWin64 /O2b2ity /GAy /Gs1024 /Zp8 /GL /GS- /Zi
+CC_OPTS = /nologo /DWin64 /O2b2ity /GAy /Gs1024 /Zp8 /GL /Zi
 !	ELSEIF "$(MSVCVER)" == "8.0"
 CC_OPTS = /nologo /O2 /Wp64 /Oi /GL /arch:SSE /fp:precise
 !	ELSEif "$(CPU)"=="P6"
 CC_OPTS = /nologo /O2 /Ob2 /GAy /Gs1024 /Zp8 /Zi
 !else
-CC_OPTS = /nologo /O2 /Ob2 /GAy /Gs1024 /QIfdiv /QI0f /YX
+CC_OPTS = /nologo /O2 /Ob2 /GAy /Gs1024
 !	ENDIF
 
 !	IF "$(MSVCVER)" == "6.0"
@@ -231,9 +239,25 @@ CC_OPTS = $(CC_OPTS) /W$(WARN)
 CC_OPTS = $(CC_OPTS) /DFLOAT8=float /DREAL_IS_FLOAT=1
 !	ENDIF
 
-# temporary remove NDEBUG, see configure.in
-#CC_OPTS = $(CC_OPTS) /DNDEBUG /MT
-CC_OPTS = $(CC_OPTS) /MT
+# Release build: compile the consistency assertions out (NDEBUG).
+CC_OPTS = $(CC_OPTS) /DNDEBUG /MT
+
+# Security hardening.  There is no configure step on Windows, so these are
+# hardcoded for current MSVC (Visual Studio 2015 and later).
+#   /guard:cf  Control Flow Guard - integrity checks on indirect calls
+#   /GS        stack buffer-overflow (cookie) detection
+SECURITY_CC_OPTS = /guard:cf /GS
+#   /guard:cf       emit the Control Flow Guard tables into the image
+#   /DYNAMICBASE    address space layout randomization (ASLR)
+#   /NXCOMPAT       data execution prevention (non-executable data)
+SECURITY_LN_OPTS = /guard:cf /DYNAMICBASE /NXCOMPAT
+!	IF "$(MSVCVER)" == "Win64"
+#   /guard:ehcont   exception-handling continuation metadata (x64)
+SECURITY_CC_OPTS = $(SECURITY_CC_OPTS) /guard:ehcont
+#   /CETCOMPAT      compatible with the CET hardware shadow stack (x64)
+#   /HIGHENTROPYVA  64-bit high-entropy ASLR
+SECURITY_LN_OPTS = $(SECURITY_LN_OPTS) /CETCOMPAT /HIGHENTROPYVA
+!	ENDIF
 
 LN_OPTS = /nologo /pdb:none
 LN_DLL = /nologo /DLL
@@ -354,13 +378,17 @@ LN = icl
 
 #__ LIBSNDFILE ________________________________________________________________
 #
-#	uncomment the following if you want LibSndfile for input
-#	It's always a good idea to compile it in!
+#	To read input through libsndfile, pass SNDFILE=YES and point SNDFILE_DIR
+#	at an unpacked libsndfile Windows build, e.g.:
+#	    nmake -f Makefile.MSVC SNDFILE=YES SNDFILE_DIR=.\vc_solution\libsndfile\x64
+#	The folder holds include\sndfile.h and lib\sndfile.lib. The paths below
+#	supply their own separator so SNDFILE_DIR can be quoted against spaces,
+#	exactly as MPG123_DIR below.
 #
 !	IF "$(SNDFILE)" == "YES"
-SNDFILE_OPTS = /DLIBSNDFILE
-LIBSNDFILE = $(SNDFILE_DIR)libsndfile.lib
-!   ENDIF
+SNDFILE_OPTS = /DLIBSNDFILE /I"$(SNDFILE_DIR)\include\."
+LIBSNDFILE = "$(SNDFILE_DIR)\lib\sndfile.lib"
+!	ENDIF
 #________________________________________________________________ LIBSNDFILE __
 
 
@@ -372,24 +400,20 @@ CPP_OPTS = /DHAVE_CONFIG_H -I.
 
 #__ FRAME ANALYZER SUPPORT ____________________________________________________
 #
-#	Assuming you have "glib-dev" and "gtk+-dev" installed and the system
-#	DLLs "glib-1.3.dll", "gdk-1.3.dll" and "gtk-1.3.dll" copied into the
-#	"Win\System" folder
-#
-#	To compile in the frame analyzer support, you need the above mentioned
-#	libraries. You can pass the appropriate path to them in GTK_DIRS.
+#	The mp3x frame analyzer needs GTK1. Point GTK_DIR at the gtk folder of an
+#	unpacked gtk1-win tree (https://sourceforge.net/projects/gtk1-win/), e.g.:
+#	    nmake -f Makefile.MSVC GTK=YES GTK_DIR=.\vc_solution\WinGtk\gtk
+#	Only the Debug import libraries are usable; the release ones are missing
+#	symbols. The paths supply their own separator so GTK_DIR can be quoted
+#	against spaces, as MPG123_DIR does below.
 #
 !	IF "$(GTK)" == "YES"
-!	IF "$(GTK_DIRS)" == ""
-GTK_DIRS = ../3rdparty
-!	ENDIF
-GTK_OPTS = -I$(GTK_DIRS)/glib     \
-           -I$(GTK_DIRS)/gtk+     \
-           -I$(GTK_DIRS)/gtk+/gtk \
-           -I$(GTK_DIRS)/gtk+/gdk
-GTK_LIBS = $(GTK_DIRS)/gtk+/gtk/gtk-1.3.lib \
-           $(GTK_DIRS)/gtk+/gdk/gdk-1.3.lib \
-           $(GTK_DIRS)/glib/glib-1.3.lib
+GTK_OPTS = -I"$(GTK_DIR)\." -I"$(GTK_DIR)\glib\." -I"$(GTK_DIR)\gdk\." \
+           -I"$(GTK_DIR)\glib\glib\." -I"$(GTK_DIR)\build\vcpp\glib\." \
+           -I"$(GTK_DIR)\build\vcpp\gdk\."
+GTK_LIBS = "$(GTK_DIR)\build\vcpp\Debug\gtk.lib" \
+           "$(GTK_DIR)\build\vcpp\Debug\gdk.lib" \
+           "$(GTK_DIR)\build\vcpp\Debug\glib.lib"
 
 PGM = $(T_MP3X) $(PGM)
 !	ELSE
@@ -401,13 +425,27 @@ PGM = $(T_MP3X) $(PGM)
 
 
 
-#__ HIP DECODING ______________________________________________________________
+#__ mpg123 DECODING ___________________________________________________________
 #
-#	uncomment the following if you want decoding support
-#	It's always a good idea to compile it in!
+#	Decoding support uses the external libmpg123 library (the internal
+#	mpglib decoder has been retired). To build with decoding, pass
+#	MPG123=YES and point MPG123_DIR at an unpacked libmpg123 folder
+#	containing mpg123.h and libmpg123-0.lib, e.g.:
+#	    nmake -f Makefile.MSVC MPG123=YES MPG123_DIR=.\vc_solution\mpg123\x64
+#	The mpg123.de binary distribution ships a .def instead of an import
+#	library; generate the .lib once with:
+#	    lib /def:libmpg123-0.def /machine:x64 /out:libmpg123-0.lib
 #
-CPP_OPTS = $(CPP_OPTS) /DHAVE_MPGLIB
-#___________________________________________________________ HIP DECODING _____
+#	The paths below supply their own separator, so that MPG123_DIR can be
+#	quoted against spaces: a directory quoted with a trailing backslash
+#	would escape the closing quote. A trailing backslash is still accepted,
+#	it only doubles the separator.
+#
+!	IF "$(MPG123)" == "YES"
+CPP_OPTS = $(CPP_OPTS) /DHAVE_MPG123 -I"$(MPG123_DIR)\."
+MPG123_LIB = "$(MPG123_DIR)\libmpg123-0.lib"
+!	ENDIF
+#___________________________________________________________ mpg123 DECODING __
 
 
 
@@ -416,7 +454,7 @@ CPP_OPTS = $(CPP_OPTS) /DHAVE_MPGLIB
 #	uncomment the following to enable Takehiro's IEEE hack
 #	You'll want it on a x86 machine with i387 FPU
 #
-CPP_OPTS = $(CPP_OPTS) /DTAKEHIRO_IEEE754_HACK
+#CPP_OPTS = $(CPP_OPTS) /DTAKEHIRO_IEEE754_HACK
 #______________________________________________________ Takehiro's IEEE hack __
 
 
@@ -432,10 +470,9 @@ LN_OPTS = $(LN_OPTS) /LTCG
 
 
 
-CC_SWITCHES = $(CC_OPTS) $(SNDFILE_OPTS) \
-              $(GTK_OPTS) /DBS_FORMAT=BINARY
+CC_SWITCHES = $(CC_OPTS) $(SECURITY_CC_OPTS) $(SNDFILE_OPTS) /DBS_FORMAT=BINARY
 
-LN_SWITCHES = $(LN_OPTS)
+LN_SWITCHES = $(LN_OPTS) $(SECURITY_LN_OPTS)
 
 lame_sources = \
 	frontend/lame_main.c
@@ -484,32 +521,36 @@ lamelib_sources = \
 	libmp3lame/presets.c \
 	libmp3lame/version.c
 
-mpglib_sources = \
-	mpglib/common.c \
-	mpglib/dct64_i386.c \
-	mpglib/decode_i386.c \
-	mpglib/layer1.c \
-	mpglib/layer2.c \
-	mpglib/layer3.c \
-	mpglib/tabinit.c \
-	mpglib/interface.c
-
-
 !IF "$(MSVCVER)" == "Win64"
 ADDL_OBJ = bufferoverflowU.lib
 !ENDIF
 
 LIB_OBJ = $(lamelib_sources:.c=.obj)
-HIP_OBJ = $(mpglib_sources:.c=.obj)
 CMMN_OBJ = $(common_sources:.c=.obj)
 LAME_OBJ = $(lame_sources:.c=.obj)
 MPX_OBJ = $(mpx_sources:.c=.obj)
 MPRTP_OBJ = $(mp3rtp_sources:.c=.obj)
 DLL_OBJ = $(dll_sources:.c=.obj)
 
-.c.obj:
-	@$(CC) $(CPP_OPTS) $(CC_SWITCHES) -Iinclude -Ilibmp3lame -Impglib \
-	       $(CC_OUT)$@  -c $<
+# GTK1 comes last: gtk1-win ships like-named headers (version.h, config.h),
+# so LAME's own must be found first.
+INCLUDES = -I. -I$(srcdir) -I$(srcdir)/include -I$(srcdir)/libmp3lame -I$(srcdir)/mpglib $(GTK_OPTS)
+
+#	One path-mapped rule per source subdirectory: sources are read from
+#	$(srcdir)\<sub>\ and the objects are written into .\<sub>\ (the build
+#	directory). With srcdir=. this reduces to the traditional in-tree build.
+
+{$(srcdir)/frontend/}.c{frontend/}.obj:
+	@$(CC) $(CPP_OPTS) $(CC_SWITCHES) $(INCLUDES) $(CC_OUT)$@ -c $<
+
+{$(srcdir)/libmp3lame/}.c{libmp3lame/}.obj:
+	@$(CC) $(CPP_OPTS) $(CC_SWITCHES) $(INCLUDES) $(CC_OUT)$@ -c $<
+
+{$(srcdir)/libmp3lame/vector/}.c{libmp3lame/vector/}.obj:
+	@$(CC) $(CPP_OPTS) $(CC_SWITCHES) $(INCLUDES) $(CC_OUT)$@ -c $<
+
+{$(srcdir)/dll/}.c{dll/}.obj:
+	@$(CC) $(CPP_OPTS) $(CC_SWITCHES) $(INCLUDES) $(CC_OUT)$@ -c $<
 
 
 #__ MASM ______________________________________________________________________
@@ -519,15 +560,15 @@ DLL_OBJ = $(dll_sources:.c=.obj)
 !	IF "$(ASM)" == "ML64"
 #
 .SUFFIXES : .nas
-.nas.obj:
+{$(srcdir)/libmp3lame/i386/}.nas{libmp3lame/i386/}.obj:
 	@echo $<
-	@ml64 -Ilibmp3lame\i386 -Sf -DWIN32 -DWIN64 $< -Fo$@
+	@ml64 -I$(srcdir)\libmp3lame\i386 -Sf -DWIN32 -DWIN64 $< -Fo$@
 
 CC_SWITCHES = $(CC_SWITCHES) -DHAVE_NASM
 ASM_OBJ = $(ASM_OBJ) \
-	libmp3lame\i386\cpu_feat.obj \
-	libmp3lame\i386\fft3dn.obj \
-	libmp3lame\i386\fftsse.obj
+	libmp3lame/i386/cpu_feat.obj \
+	libmp3lame/i386/fft3dn.obj \
+	libmp3lame/i386/fftsse.obj
 
 #	not yet coded
 #CC_SWITCHES = $(CC_SWITCHES) -DUSE_FFTFPU
@@ -542,15 +583,15 @@ ASM_OBJ = $(ASM_OBJ) \
 !	ELSEIF "$(ASM)" == "YES"
 #
 .SUFFIXES : .nas
-.nas.obj:
+{$(srcdir)/libmp3lame/i386/}.nas{libmp3lame/i386/}.obj:
 	@echo $<
-	@nasmw -f $(OFF) -i libmp3lame/i386/ -DWIN32 $< -o $@
+	@nasmw -f $(OFF) -i $(srcdir)/libmp3lame/i386/ -DWIN32 $< -o $@
 
 CC_SWITCHES = $(CC_SWITCHES) /DHAVE_NASM
 ASM_OBJ = $(ASM_OBJ) \
-	libmp3lame\i386\cpu_feat.obj \
-	libmp3lame\i386\fft3dn.obj \
-	libmp3lame\i386\fftsse.obj
+	libmp3lame/i386/cpu_feat.obj \
+	libmp3lame/i386/fft3dn.obj \
+	libmp3lame/i386/fftsse.obj
 
 #	not yet coded
 #CC_SWITCHES = $(CC_SWITCHES) /DUSE_FFTFPU
@@ -585,7 +626,11 @@ no_target_specified :	$(PGM)
 
 target_directory :
 	@if not exist $(TARGET_DIR) mkdir $(TARGET_DIR)
-	
+	@if not exist frontend mkdir frontend
+	@if not exist dll mkdir dll
+	@if not exist libmp3lame\vector mkdir libmp3lame\vector
+	@if not exist libmp3lame\i386 mkdir libmp3lame\i386
+
 common:	$(CMMN_OBJ)
 	@echo.
 	@echo --- COMMON FRONTEND STUFF UPTODATE ---
@@ -596,43 +641,38 @@ libA:	$(LIB_OBJ)
 	@echo --- LAME MP3 ENCODING LIBRARY UPTODATE ---
 	@echo.
 
-libB:	$(HIP_OBJ)
-	@echo.
-	@echo --- HIP DECODING LIBRARY UPTODATE ---
-	@echo.
+lib: $(ASM_OBJ) libA
 
-lib: $(ASM_OBJ) libA libB
+lame.res: $(srcdir)/libmp3lame/lame.rc
+	@rc.exe /d "NDEBUG" /d "_APP=lame.exe" /l 0x409 /fo"./frontend/lame.res" "$(srcdir)/libmp3lame/lame.rc"
 
-lame.res: ./libmp3lame/lame.rc
-	@rc.exe /d "NDEBUG" /d "_APP=lame.exe" /l 0x409 /fo"./frontend/lame.res" "./libmp3lame/lame.rc"
+mp3rtp.res: $(srcdir)/libmp3lame/lame.rc
+	@rc.exe /d "NDEBUG" /d "_APP=mp3rtp.exe" /l 0x409 /fo"./frontend/mp3rtp.res" "$(srcdir)/libmp3lame/lame.rc"
 
-mp3rtp.res: ./libmp3lame/lame.rc
-	@rc.exe /d "NDEBUG" /d "_APP=mp3rtp.exe" /l 0x409 /fo"./frontend/mp3rtp.res" "./libmp3lame/lame.rc"
+mp3x.res: $(srcdir)/libmp3lame/lame.rc
+	@rc.exe /d "NDEBUG" /d "_APP=mp3x.exe" /l 0x409 /fo"./frontend/mp3x.res" "$(srcdir)/libmp3lame/lame.rc"
 
-mp3x.res: ./libmp3lame/lame.rc
-	@rc.exe /d "NDEBUG" /d "_APP=mp3x.exe" /l 0x409 /fo"./frontend/mp3x.res" "./libmp3lame/lame.rc"
-
-lame_enc.res: ./libmp3lame/lame.rc
-	@rc.exe /d "NDEBUG" /d "_DLL=lame_enc.dll" /l 0x409 /fo"./frontend/lame_enc.res" "./libmp3lame/lame.rc"
+lame_enc.res: $(srcdir)/libmp3lame/lame.rc
+	@rc.exe /d "NDEBUG" /d "_DLL=lame_enc.dll" /l 0x409 /fo"./frontend/lame_enc.res" "$(srcdir)/libmp3lame/lame.rc"
 
 $(T_LAME) : target_directory config.h $(T_LIB_STATIC) common $(LAME_OBJ) lame.res
-	@$(LN) $(LN_OUT)$(TARGET_DIR)$@ $(LN_SWITCHES) $(LIBSNDFILE) \
+	@$(LN) $(LN_OUT)$(TARGET_DIR)$@ $(LN_SWITCHES) $(LIBSNDFILE) $(MPG123_LIB) \
 	       $(TARGET_DIR)$(T_LIB_STATIC) $(CMMN_OBJ) $(LAME_OBJ) $(ADDL_OBJ) \
 	       ./frontend/lame.res
 	@echo.
 	@echo --=*  $(TARGET_DIR)$@ ready  *=--
 	@echo.
 
-$(T_MP3X) : target_directory config.h lib common $(MPX_OBJ) mp3x.res
-	@$(LN) $(LN_OUT)$(TARGET_DIR)$@ $(LN_SWITCHES) $(GTK_LIBS) $(LIBSNDFILE) \
+$(T_MP3X) : target_directory config.h $(T_LIB_STATIC) common $(MPX_OBJ) mp3x.res
+	@$(LN) $(LN_OUT)$(TARGET_DIR)$@ $(LN_SWITCHES) $(GTK_LIBS) $(LIBSNDFILE) $(MPG123_LIB) \
 	       $(TARGET_DIR)$(T_LIB_STATIC) $(CMMN_OBJ) $(MPX_OBJ) $(ADDL_OBJ) \
 	       ./frontend/mp3x.res
 	@echo.
 	@echo --=*  $(TARGET_DIR)$@ ready  *=--
 	@echo.
 
-$(T_MP3RTP) : target_directory config.h lib common $(MPRTP_OBJ) mp3rtp.res
-	@$(LN) $(LN_OUT)$(TARGET_DIR)$@ $(LN_SWITCHES) $(LIBSNDFILE) \
+$(T_MP3RTP) : target_directory config.h $(T_LIB_STATIC) common $(MPRTP_OBJ) mp3rtp.res
+	@$(LN) $(LN_OUT)$(TARGET_DIR)$@ $(LN_SWITCHES) $(LIBSNDFILE) $(MPG123_LIB) \
 	       $(TARGET_DIR)$(T_LIB_STATIC) $(CMMN_OBJ) $(MPRTP_OBJ) $(ADDL_OBJ) \
 	       ./frontend/mp3rtp.res wsock32.lib
 	@echo.
@@ -642,17 +682,17 @@ $(T_MP3RTP) : target_directory config.h lib common $(MPRTP_OBJ) mp3rtp.res
 $(T_LEGACY_DLL) : target_directory config.h $(DLL_OBJ) lame_enc.res
 	@$(LN) $(LN_OUT)$(TARGET_DIR)$@ $(LN_SWITCHES) \
 	       $(TARGET_DIR)$(T_LIB_STATIC) $(LN_DLL) \
-	       $(DLL_OBJ) $(ADDL_OBJ) ./frontend/lame_enc.res user32.lib
+	       $(DLL_OBJ) $(ADDL_OBJ) $(MPG123_LIB) ./frontend/lame_enc.res user32.lib
 	@echo.
 	@echo --=*  $(TARGET_DIR)$@ ready  *=--
 	@echo.
 
 $(T_DLL) : target_directory config.h $(T_LIB_STATIC) 
-	@$(LN) $(LN_DLL) $(MACHINE) \
-		/DEF:"include\lame.def" \
+	@$(LN) $(LN_DLL) $(SECURITY_LN_OPTS) $(MACHINE) \
+		/DEF:"$(srcdir)\include\lame.def" \
 		$(ADDL_OBJ) \
 		$(LN_OUT)"$(TARGET_DIR)$@" \
-		$(TARGET_DIR)$(T_LIB_STATIC) libmp3lame\version.obj 
+		$(TARGET_DIR)$(T_LIB_STATIC) $(MPG123_LIB) libmp3lame\version.obj
 	@echo.
 	@echo --=*  $(TARGET_DIR)$@ ready  *=--
 	@echo.
@@ -660,13 +700,13 @@ $(T_DLL) : target_directory config.h $(T_LIB_STATIC)
 $(T_LIB_STATIC) : target_directory lib
 	@lib $(LIB_OPTS) \
 		/OUT:"$(TARGET_DIR)$@" \
-		$(ASM_OBJ) $(LIB_OBJ) $(HIP_OBJ)
+		$(ASM_OBJ) $(LIB_OBJ)
 	@echo.
 	@echo --=*  $(TARGET_DIR)$@ ready  *=--
 	@echo.
 		
-config.h : configMS.h
-	@-copy configMS.h config.h
+config.h : $(srcdir)/configMS.h
+	@-copy "$(srcdir)\configMS.h" config.h
 
 clean:
 	@-del $(TARGET_DIR)$(T_LAME)

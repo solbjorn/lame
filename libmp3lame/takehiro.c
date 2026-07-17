@@ -134,7 +134,7 @@ quantize_lines_xrpow_01(unsigned int l, FLOAT istep, const FLOAT * xr, int *ix)
 
 
 
-#ifdef TAKEHIRO_IEEE754_HACK
+#if TAKEHIRO_IEEE754_HACK
 
 typedef union {
     float   f;

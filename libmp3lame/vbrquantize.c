@@ -84,7 +84,7 @@ typedef VOLATILE union {
 
 
 
-#ifdef TAKEHIRO_IEEE754_HACK
+#if TAKEHIRO_IEEE754_HACK
 #define DOUBLEX double
 #else
 #define DOUBLEX FLOAT
@@ -93,7 +93,7 @@ typedef VOLATILE union {
 #define MAGIC_FLOAT_def (65536*(128))
 #define MAGIC_INT_def    0x4b000000
 
-#ifdef TAKEHIRO_IEEE754_HACK
+#if TAKEHIRO_IEEE754_HACK
 #else
 /*********************************************************************
  * XRPOW_FTOI is a macro to convert floats to ints.
@@ -109,7 +109,7 @@ typedef VOLATILE union {
 #endif
 
 static int const MAGIC_INT = MAGIC_INT_def;
-#ifndef TAKEHIRO_IEEE754_HACK
+#if !TAKEHIRO_IEEE754_HACK
 static DOUBLEX const ROUNDFAC = ROUNDFAC_def;
 #endif
 static DOUBLEX const MAGIC_FLOAT = MAGIC_FLOAT_def;
@@ -172,7 +172,7 @@ find_lowest_scalefac(const FLOAT xr34)
 inline static void
 k_34_4(DOUBLEX x[4], int l3[4])
 {
-#ifdef TAKEHIRO_IEEE754_HACK
+#if TAKEHIRO_IEEE754_HACK
     fi_union fi[4];
 
     assert(x[0] <= IXMAX_VAL && x[1] <= IXMAX_VAL && x[2] <= IXMAX_VAL && x[3] <= IXMAX_VAL);
@@ -1181,7 +1181,8 @@ cutDistribution(const int sfwork[SFBMAX], int sf_out[SFBMAX], int cut)
 
 
 static int
-flattenDistribution(const int sfwork[SFBMAX], int sf_out[SFBMAX], int dm, int k, int p)
+flattenDistribution(const int sfwork[SFBMAX], const int vbrsfmin[SFBMAX],
+                    int sf_out[SFBMAX], int dm, int k, int p)
 {
     unsigned int i, j;
     int     x, sfmax = 0;
@@ -1189,8 +1190,10 @@ flattenDistribution(const int sfwork[SFBMAX], int sf_out[SFBMAX], int dm, int k,
         for (j = SFBMAX, i = 0; j > 0; --j, ++i) {
             int const di = p - sfwork[i];
             x = sfwork[i] + (k * di) / dm;
-            if (x < 0) {
-                x = 0;
+            /* the scalefactor may not drop below the band's minimum, or the
+               allocator cannot represent it; same floor as tryGlobalStepsize */
+            if (x < vbrsfmin[i]) {
+                x = vbrsfmin[i];
             }
             else {
                 if (x > 255) {
@@ -1245,7 +1248,7 @@ outOfBitsStrategy(algo_t const* that, const int sfwork[SFBMAX], const int vbrsfm
         int     bu = 0;
         int     bo = dm;
         for (;;) {
-            int const sfmax = flattenDistribution(sfwork, wrk, dm, bi, p);
+            int const sfmax = flattenDistribution(sfwork, vbrsfmin, wrk, dm, bi, p);
             nbits = tryThatOne(that, wrk, vbrsfmin, sfmax);
             if (nbits <= target) {
                 bi_ok = bi;
@@ -1263,7 +1266,7 @@ outOfBitsStrategy(algo_t const* that, const int sfwork[SFBMAX], const int vbrsfm
         }
         if (bi_ok >= 0) {
             if (bi != bi_ok) {
-                int const sfmax = flattenDistribution(sfwork, wrk, dm, bi_ok, p);
+                int const sfmax = flattenDistribution(sfwork, vbrsfmin, wrk, dm, bi_ok, p);
                 nbits = tryThatOne(that, wrk, vbrsfmin, sfmax);
             }
             return;
@@ -1277,7 +1280,7 @@ outOfBitsStrategy(algo_t const* that, const int sfwork[SFBMAX], const int vbrsfm
         int     bu = p;
         int     bo = 255;
         for (;;) {
-            int const sfmax = flattenDistribution(sfwork, wrk, dm, dm, bi);
+            int const sfmax = flattenDistribution(sfwork, vbrsfmin, wrk, dm, dm, bi);
             nbits = tryThatOne(that, wrk, vbrsfmin, sfmax);
             if (nbits <= target) {
                 bi_ok = bi;
@@ -1295,7 +1298,7 @@ outOfBitsStrategy(algo_t const* that, const int sfwork[SFBMAX], const int vbrsfm
         }
         if (bi_ok >= 0) {
             if (bi != bi_ok) {
-                int const sfmax = flattenDistribution(sfwork, wrk, dm, dm, bi_ok);
+                int const sfmax = flattenDistribution(sfwork, vbrsfmin, wrk, dm, dm, bi_ok);
                 nbits = tryThatOne(that, wrk, vbrsfmin, sfmax);
             }
             return;

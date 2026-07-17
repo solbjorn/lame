@@ -476,6 +476,21 @@ lame_init_qval(lame_global_flags * gfp)
         break;
     }
 
+    /*  Amplified noise shaping degrades CBR and ABR instead of improving them,
+     *  which is why the faster quality settings, the ones that leave it off,
+     *  sound better than the slower ones. It dates from the point where CBR
+     *  and ABR were switched over to the newer VBR psychoacoustic model
+     *  without adapting their encoding loops to it, so the amplification
+     *  decides against a distortion measure that no longer means what it did.
+     *  VBR is unaffected.
+     *
+     *  Until those loops are reconciled with the psychoacoustic model, keep
+     *  the amplification out of the modes it hurts. This treats the symptom;
+     *  the interaction itself is still to be repaired.
+     */
+    if (cfg->vbr == vbr_off || cfg->vbr == vbr_abr) {
+        cfg->noise_shaping_amp = 0;
+    }
 }
 
 
@@ -923,20 +938,14 @@ lame_init_params(lame_global_flags * gfp)
         else {
             gfp->brate = FindNearestBitrate(gfp->brate, cfg->version, cfg->samplerate_out);
             gfc->ov_enc.bitrate_index = BitrateIndex(gfp->brate, cfg->version, cfg->samplerate_out);
-            if (gfc->ov_enc.bitrate_index <= 0) {
-                /* This never happens, because of preceding FindNearestBitrate!
-                 * But, set a sane value, just in case
-                 */
-                assert(0);
-                gfc->ov_enc.bitrate_index = 8;
-            }
         }
     }
     else {
         gfc->ov_enc.bitrate_index = 1;
     }
 
-    init_bit_stream_w(gfc);
+    if (init_bit_stream_w(gfc) != 0)
+        return -1;
 
     j = cfg->samplerate_index + (3 * cfg->version) + 6 * (cfg->samplerate_out < 16000);
     for (i = 0; i < SBMAX_l + 1; i++)
@@ -1084,26 +1093,12 @@ lame_init_params(lame_global_flags * gfp)
                 FindNearestBitrate(gfp->VBR_min_bitrate_kbps, cfg->version, cfg->samplerate_out);
             cfg->vbr_min_bitrate_index =
                 BitrateIndex(gfp->VBR_min_bitrate_kbps, cfg->version, cfg->samplerate_out);
-            if (cfg->vbr_min_bitrate_index < 0) {
-                /* This never happens, because of preceding FindNearestBitrate!
-                 * But, set a sane value, just in case
-                 */
-                assert(0);
-                cfg->vbr_min_bitrate_index = 1;
-            }
         }
         if (gfp->VBR_max_bitrate_kbps) {
             gfp->VBR_max_bitrate_kbps =
                 FindNearestBitrate(gfp->VBR_max_bitrate_kbps, cfg->version, cfg->samplerate_out);
             cfg->vbr_max_bitrate_index =
                 BitrateIndex(gfp->VBR_max_bitrate_kbps, cfg->version, cfg->samplerate_out);
-            if (cfg->vbr_max_bitrate_index < 0) {
-                /* This never happens, because of preceding FindNearestBitrate!
-                 * But, set a sane value, just in case
-                 */
-                assert(0);
-                cfg->vbr_max_bitrate_index = cfg->samplerate_out < 16000 ? 8 : 14;
-            }
         }
         gfp->VBR_min_bitrate_kbps = bitrate_table[cfg->version][cfg->vbr_min_bitrate_index];
         gfp->VBR_max_bitrate_kbps = bitrate_table[cfg->version][cfg->vbr_max_bitrate_index];
@@ -1276,7 +1271,8 @@ lame_init_params(lame_global_flags * gfp)
     (void) lame_init_bitstream(gfp);
 
     iteration_init(gfc);
-    (void) psymodel_init(gfp);
+    if (psymodel_init(gfp) != 0)
+        return -1;
 
     cfg->buffer_constraint = get_max_frame_buffer_size_by_constraint(cfg, gfp->strict_ISO);
 
@@ -1746,7 +1742,8 @@ lame_encode_buffer_sample_t(lame_internal_flags * gfc,
         in_buffer_ptr[0] = in_buffer[0];
         in_buffer_ptr[1] = in_buffer[1];
         /* copy in new samples into mfbuf, with resampling */
-        fill_buffer(gfc, mfbuf, &in_buffer_ptr[0], nsamples, &n_in, &n_out);
+        if (fill_buffer(gfc, mfbuf, &in_buffer_ptr[0], nsamples, &n_in, &n_out) < 0)
+            return LAME_NOMEM;
 
         /* compute ReplayGain of resampled input if requested */
         if (cfg->findReplayGain && !cfg->decode_on_the_fly)
@@ -1818,8 +1815,30 @@ enum PCMSampleType
 ,   pcm_double_type
 };
 
-static void
-lame_copy_inbuffer(lame_internal_flags* gfc, 
+/*
+ * An IEEE-754 value is NaN or infinite exactly when every exponent bit is set.
+ * The raw bit pattern is inspected rather than the value itself: the encoder is
+ * built with -ffast-math, which permits the compiler to assume that no NaN or
+ * infinity can occur and to fold isfinite()/x!=x down to a constant.
+ */
+static int
+pcm_float_is_finite(float const x)
+{
+    uint32_t u;
+    memcpy(&u, &x, sizeof u);
+    return ((u >> 23) & 0xFFu) != 0xFFu;
+}
+
+static int
+pcm_double_is_finite(double const x)
+{
+    uint64_t u;
+    memcpy(&u, &x, sizeof u);
+    return ((u >> 52) & 0x7FFu) != 0x7FFu;
+}
+
+static int
+lame_copy_inbuffer(lame_internal_flags* gfc,
                    void const* l, void const* r, int nsamples,
                    enum PCMSampleType pcm_type, int jump, FLOAT s)
 {
@@ -1835,39 +1854,56 @@ lame_copy_inbuffer(lame_internal_flags* gfc,
     m[1][0] = s * cfg->pcm_transform[1][0];
     m[1][1] = s * cfg->pcm_transform[1][1];
 
+    /* Integer sample types cannot represent NaN or infinity, so they are taken
+     * as given; only the floating point ones are screened.
+     */
+#define VALIDATE_NONE(sl, sr)
+#define VALIDATE_FLOAT(sl, sr) \
+    if (!pcm_float_is_finite(sl) || !pcm_float_is_finite(sr)) { \
+        return -1; \
+    }
+#define VALIDATE_DOUBLE(sl, sr) \
+    if (!pcm_double_is_finite(sl) || !pcm_double_is_finite(sr)) { \
+        return -1; \
+    }
+
     /* make a copy of input buffer, changing type to sample_t */
-#define COPY_AND_TRANSFORM(T) \
+#define COPY_AND_TRANSFORM(T, VALIDATE) \
 { \
     T const *bl = l, *br = r; \
     int     i; \
     for (i = 0; i < nsamples; i++) { \
-        sample_t const xl = *bl; \
-        sample_t const xr = *br; \
-        sample_t const u = xl * m[0][0] + xr * m[0][1]; \
-        sample_t const v = xl * m[1][0] + xr * m[1][1]; \
-        ib0[i] = u; \
-        ib1[i] = v; \
+        VALIDATE(*bl, *br) \
+        { \
+            sample_t const xl = *bl; \
+            sample_t const xr = *br; \
+            sample_t const u = xl * m[0][0] + xr * m[0][1]; \
+            sample_t const v = xl * m[1][0] + xr * m[1][1]; \
+            ib0[i] = u; \
+            ib1[i] = v; \
+        } \
         bl += jump; \
         br += jump; \
     } \
 }
     switch ( pcm_type ) {
-    case pcm_short_type: 
-        COPY_AND_TRANSFORM(short int);
+    case pcm_short_type:
+        COPY_AND_TRANSFORM(short int, VALIDATE_NONE);
         break;
     case pcm_int_type:
-        COPY_AND_TRANSFORM(int);
+        COPY_AND_TRANSFORM(int, VALIDATE_NONE);
         break;
     case pcm_long_type:
-        COPY_AND_TRANSFORM(long int);
+        COPY_AND_TRANSFORM(long int, VALIDATE_NONE);
         break;
     case pcm_float_type:
-        COPY_AND_TRANSFORM(float);
+        COPY_AND_TRANSFORM(float, VALIDATE_FLOAT);
         break;
     case pcm_double_type:
-        COPY_AND_TRANSFORM(double);
+        COPY_AND_TRANSFORM(double, VALIDATE_DOUBLE);
         break;
     }
+    return 0;
 }
 
 
@@ -1888,17 +1924,26 @@ lame_encode_buffer_template(lame_global_flags * gfp,
                 return -2;
             }
             /* make a copy of input buffer, changing type to sample_t */
-            if (cfg->channels_in > 1) {
-                if (buffer_l == 0 || buffer_r == 0) {
-                    return 0;
+            {
+                int     rc;
+
+                if (cfg->channels_in > 1) {
+                    if (buffer_l == 0 || buffer_r == 0) {
+                        return 0;
+                    }
+                    rc = lame_copy_inbuffer(gfc, buffer_l, buffer_r, nsamples, pcm_type, aa, norm);
+                } else {
+                    if (buffer_l == 0) {
+                        return 0;
+                    }
+                    rc = lame_copy_inbuffer(gfc, buffer_l, buffer_l, nsamples, pcm_type, aa, norm);
                 }
-                lame_copy_inbuffer(gfc, buffer_l, buffer_r, nsamples, pcm_type, aa, norm);
-            }
-            else {
-                if (buffer_l == 0) {
-                    return 0;
+                /* A non-finite sample would spread through the psycho acoustic
+                 * model and turn the whole frame into noise.
+                 */
+                if (rc != 0) {
+                    return LAME_BADINPUTDATA;
                 }
-                lame_copy_inbuffer(gfc, buffer_l, buffer_l, nsamples, pcm_type, aa, norm);
             }
 
             return lame_encode_buffer_sample_t(gfc, nsamples, mp3buf, mp3buf_size);

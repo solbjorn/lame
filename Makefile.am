@@ -7,11 +7,12 @@ ACLOCAL_AMFLAGS=-I m4
 .PHONY: test
 
 SUBDIRS = mpglib libmp3lame frontend Dll doc include misc dshow ACM \
-	mac vc_solution
+	mac vc_solution test
 
 CLEANFILES = testcase.new.mp3
 
 EXTRA_DIST = \
+	.clang-format \
 	API \
 	DEFINES \
 	HACKING \
@@ -29,7 +30,13 @@ EXTRA_DIST = \
 	lame.spec.in \
 	lame.spec \
 	testcase.mp3 \
-	testcase.wav
+	testcase.wav \
+	maintainer/gen-build-matrix.sh \
+	maintainer/gen-build-matrix.ps1 \
+	maintainer/setup-windows-deps.ps1 \
+	maintainer/perf-compare.sh \
+	maintainer/setup-quality-corpus.sh \
+	maintainer/quality-compare.py
 
 #
 # The differences depend on the used processor architecture, the used

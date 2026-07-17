@@ -548,18 +548,20 @@ init_outfile(char const *outPath, int decode)
         /* Assign correct file type */
         if (outf != NULL) {
             char   *p, *out_path = strdup(outPath);
-            for (p = out_path; *p; p++) { /* ugly, ugly to modify a string */
-                switch (*p) {
-                case '.':
-                    *p = '/';
-                    break;
-                case '/':
-                    *p = '.';
-                    break;
+            if (out_path != NULL) {
+                for (p = out_path; *p; p++) { /* ugly, ugly to modify a string */
+                    switch (*p) {
+                    case '.':
+                        *p = '/';
+                        break;
+                    case '/':
+                        *p = '.';
+                        break;
+                    }
                 }
+                SetFiletype(out_path, decode ? 0xFB1 /*WAV*/ : 0x1AD /*AMPEG*/);
+                free(out_path);
             }
-            SetFiletype(out_path, decode ? 0xFB1 /*WAV*/ : 0x1AD /*AMPEG*/);
-            free(out_path);
         }
 #else
         (void) decode;
@@ -1656,6 +1658,8 @@ parse_aiff_header(lame_global_flags * gfp, FILE * sf)
     ui32_ChunkSize = read_32_bits_high_low(sf);
 
     ui32_TypeID = read_32_bits_high_low(sf);
+    if (ui32_ChunkSize < 4)     /* malformed FORM size: guard the -= 4 underflow */
+        return -1;
     ui32_ChunkSize -= 4;
     if ((ui32_TypeID != IFF_ID_AIFF) && (ui32_TypeID != IFF_ID_AIFC))
         return -1;

@@ -20,11 +20,12 @@ dnl FRONTEND_LDADD
 dnl extra vars for libmp3lame:
 dnl LIBMP3LAME_LDADD
 
-AC_PREREQ([2.71])
-AC_INIT([lame],[3.101],[lame-dev@lists.sf.net])
+AC_PREREQ([2.73])
+AC_INIT([lame],[4.1],[lame-dev@lists.sourceforge.net])
 AC_CONFIG_SRCDIR([libmp3lame/lame.c])
 AC_CONFIG_MACRO_DIRS([m4])
 AC_LANG([C])
+AC_USE_SYSTEM_EXTENSIONS
 
 dnl check system
 AC_CANONICAL_HOST
@@ -40,6 +41,14 @@ AH_BOTTOM([#endif /* LAME_CONFIG_H */])
 AM_MAINTAINER_MODE
 AM_MAKE_INCLUDE
 PKG_PROG_PKG_CONFIG([])
+
+dnl for doc/Makefile's "doxygen" target - Graphviz is optional, so this must
+dnl not fail configure if it's absent
+AC_ARG_WITH([dot],
+  [AS_HELP_STRING([--with-dot=PATH], [path to Graphviz's dot tool, used by Doxygen for diagrams (default: autodetect on PATH)])],
+  [AS_IF([test "x$withval" = xno], [DOT=], [DOT="$withval"])],
+  [AC_PATH_PROG([DOT], [dot])])
+AC_SUBST([DOT])
 
 dnl check environment
 AC_SEARCH_LIBS([strerror],[cposix])
@@ -118,6 +127,35 @@ if test "x${GCC}" = "xyes"; then
 	fi
 fi
 
+
+dnl LAME_CHECK_CFLAG(FLAG, VARIABLE)
+dnl   Append FLAG to shell VARIABLE if the C compiler accepts it.  -Werror is
+dnl   added so that a flag which only warns (e.g. clang's "unknown argument")
+dnl   still counts as a rejection, and -O2 is added so that flags which are
+dnl   only meaningful with optimization (e.g. _FORTIFY_SOURCE) probe correctly.
+AC_DEFUN([LAME_CHECK_CFLAG],
+[AC_MSG_CHECKING([whether $CC accepts $1])
+lame_check_flag_save=$CFLAGS
+CFLAGS="$CFLAGS -O2 $1 -Werror"
+AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[]], [[]])],
+  [lame_check_flag_ok=yes], [lame_check_flag_ok=no])
+CFLAGS=$lame_check_flag_save
+AC_MSG_RESULT([$lame_check_flag_ok])
+AS_IF([test "x$lame_check_flag_ok" = xyes], [$2="[$]{$2} $1"])
+])
+
+dnl LAME_CHECK_LDFLAG(FLAG, VARIABLE)
+dnl   Append FLAG to shell VARIABLE if the compiler driver / linker accepts it.
+AC_DEFUN([LAME_CHECK_LDFLAG],
+[AC_MSG_CHECKING([whether the linker accepts $1])
+lame_check_flag_save=$LDFLAGS
+LDFLAGS="$LDFLAGS $1 -Werror"
+AC_LINK_IFELSE([AC_LANG_PROGRAM([[]], [[]])],
+  [lame_check_flag_ok=yes], [lame_check_flag_ok=no])
+LDFLAGS=$lame_check_flag_save
+AC_MSG_RESULT([$lame_check_flag_ok])
+AS_IF([test "x$lame_check_flag_ok" = xyes], [$2="[$]{$2} $1"])
+])
 
 
 AC_CHECK_HEADER(dmalloc.h)
@@ -446,9 +484,48 @@ dnl Checks for libraries.
 
 AC_CHECK_HEADERS(termcap.h)
 AC_CHECK_HEADERS(ncurses/termcap.h)
-AC_CHECK_LIB(termcap, initscr, HAVE_TERMCAP="termcap")
-AC_CHECK_LIB(curses, initscr, HAVE_TERMCAP="curses")
-AC_CHECK_LIB(ncurses, initscr, HAVE_TERMCAP="ncurses")
+
+dnl The console code drives the terminal through the termcap interface,
+dnl tgetent/tgetnum/tgetstr, and never calls initscr. Probing for initscr
+dnl therefore accepted libraries that cannot serve the header the console code
+dnl actually includes: where ncurses is packaged as a static library whose
+dnl termcap header declares those entry points as DLL imports, the probe
+dnl succeeded and the frontend then failed to link. Compile the same header
+dnl and calls the console code does, against each candidate in turn, and keep
+dnl the first that satisfies them, so that the intended termcap, curses,
+dnl ncurses preference decides. Falling through all three leaves the terminal
+dnl support disabled, which the console code already handles, rather than
+dnl breaking the build.
+HAVE_TERMCAP=""
+lame_termcap_save_LIBS="${LIBS}"
+for lame_termcap_lib in termcap curses ncurses; do
+  AC_MSG_CHECKING([for the termcap interface in -l${lame_termcap_lib}])
+  LIBS="-l${lame_termcap_lib} ${lame_termcap_save_LIBS}"
+  AC_LINK_IFELSE([AC_LANG_PROGRAM([[
+#if defined(HAVE_NCURSES_TERMCAP_H)
+# include <ncurses/termcap.h>
+#elif defined(HAVE_TERMCAP_H)
+# include <termcap.h>
+#else
+# include <curses.h>
+# if !defined(__bsdi__)
+#  include <term.h>
+# endif
+#endif
+    ]], [[
+      char termcap_buffer[2048];
+      char *area = termcap_buffer;
+      if (tgetent(termcap_buffer, "vt100") == 1) {
+          (void) tgetnum("li");
+          (void) tgetstr("ce", &area);
+      }
+    ]])], [AC_MSG_RESULT(yes)
+           HAVE_TERMCAP="${lame_termcap_lib}"], [AC_MSG_RESULT(no)])
+  if test "x${HAVE_TERMCAP}" != "x"; then
+    break
+  fi
+done
+LIBS="${lame_termcap_save_LIBS}"
 AC_CHECK_HEADERS(langinfo.h, AC_CHECK_FUNCS(nl_langinfo))
 
 AM_ICONV
@@ -645,7 +722,7 @@ AC_ARG_ENABLE(ipv6, AS_HELP_STRING([--disable-ipv6],
     CONFIG_IPV6=yes)
 if test "x$CONFIG_IPV6" = "xyes" ; then
     AC_CACHE_VAL(ac_cv_ipv6,
-    AC_TRY_RUN([
+    AC_RUN_IFELSE([AC_LANG_SOURCE([[
     #include <sys/types.h>
     #include <sys/socket.h>
     #include <netinet/in.h>
@@ -656,10 +733,7 @@ if test "x$CONFIG_IPV6" = "xyes" ; then
         struct sockaddr_in6 foo;
         fd = socket(AF_INET6, SOCK_STREAM, 0);
         exit(fd >= 0 ? 0 : 1);
-    }],
-    ac_cv_ipv6=yes,
-    ac_cv_ipv6=no,
-    ac_cv_ipv6=yes))
+    }]])],[ac_cv_ipv6=yes],[ac_cv_ipv6=no],[ac_cv_ipv6=yes]))
     AC_MSG_RESULT($ac_cv_ipv6)
     if test $ac_cv_ipv6 = yes ; then
         AC_DEFINE(IPV6,1,[check if system supports IPV6])
@@ -668,9 +742,18 @@ else
     AC_MSG_RESULT($CONFIG_IPV6)	
 fi
 AC_MSG_CHECKING(if dynamic linking of the frontends is requested)
+# Dynamic linking is the default: it lets the frontends pick up the shared
+# library's optimization (see -fno-semantic-interposition below) and be built
+# as position-independent executables together with the hardening flags.
+# --disable-dynamic-frontends links the frontends statically into a
+# self-contained binary.
 AC_ARG_ENABLE(dynamic-frontends,
-  [  --enable-dynamic-frontends Link frontends against shared libraries [default=no]],
-    FRONTEND_LDFLAGS="${FRONTEND_LDFLAGS}", FRONTEND_LDFLAGS="${FRONTEND_LDFLAGS} -static")
+  [AS_HELP_STRING([--disable-dynamic-frontends],
+     [link the frontends statically against libmp3lame (default: dynamic)])],
+  [], [enable_dynamic_frontends=yes])
+if test "x${enable_dynamic_frontends}" = "xno"; then
+	FRONTEND_LDFLAGS="${FRONTEND_LDFLAGS} -static"
+fi
 case "x${FRONTEND_LDFLAGS}" in
 *-static*)
 	AC_MSG_RESULT(no)
@@ -835,20 +918,43 @@ case $host_os in
 esac
 
 #
-# 'expopt' is used for "additional optimizations", not for optimizations which
-# are marked as "experimental" in the guide for the compiler.
-# They are "experimental" here in the LAME project (at least
-# "--enable-expopt=full").
+# Optimization flags.
+#
+# Probe the compiler for the optimization flags we want and keep only the ones
+# it accepts.
+#
+# --enable-expopt adds extra, less universally beneficial flags on top of the
+# always-on base set.
 #
 AC_MSG_CHECKING(for additional optimizations)
 AC_ARG_ENABLE(expopt,
-  [  --enable-expopt=full,norm Whether to enable experimental optimizations]
+  [  --enable-expopt=norm    Whether to enable experimental optimizations]
   [                          [default=no]],
     CONFIG_EXPOPT="${enableval}", CONFIG_EXPOPT="no")
+AC_MSG_RESULT(${CONFIG_EXPOPT})
+
+# Security hardening is on by default; --disable-hardening opts out.
+AC_ARG_ENABLE([hardening],
+  [AS_HELP_STRING([--disable-hardening],
+     [do not add compiler/linker security hardening flags (default: enabled)])],
+  [], [enable_hardening=yes])
+
+# Machine-specific tuning is opt-in: it can produce binaries that do not run
+# on other CPUs of the same architecture.
+AC_ARG_ENABLE([native],
+  [AS_HELP_STRING([--enable-native],
+     [tune the build for this exact machine, not portable (default: disabled)])],
+  [], [enable_native=no])
 
 if test "x$HAVE_GCC" = "xyes" -o "x$HAVE_CLANG" = "xyes"; then
-	# gcc defaults. OS specific options go in versious sections below
-	# from the gcc man pages:  "there is no reason to use -pedantic"
+	OPTIMIZATION=
+	HARDENING_CFLAGS=
+	HARDENING_LDFLAGS=
+	HARDENING_FE_CFLAGS=
+	HARDENING_FE_LDFLAGS=
+
+	# Warnings, and a faster compile pipe where the linker supports it.
+	# (Per the gcc manual, "there is no reason to use -pedantic".)
 	if test "x${with_gnu_ld}" = "xyes"; then
 		CFLAGS="-Wall -pipe ${CFLAGS}"
 	else
@@ -856,209 +962,87 @@ if test "x$HAVE_GCC" = "xyes" -o "x$HAVE_CLANG" = "xyes"; then
 		CFLAGS="-Wall ${CFLAGS}"
 	fi
 
-	# GCC version specific generic options
-	if test "x${HAVE_GCC}" = "xyes"; then
-		case "${GCC_version}" in
-		2.96*)
-        		# for buggy version of gcc shipped with RH7.1, back of on some
-        		# optimizations
-        		OPTIMIZATION="-O -fomit-frame-pointer -ffast-math \
-				-funroll-loops"
-			OPTIMIZATION_FULL="-fmove-all-movables -freduce-all-givs \
-				-fsched-interblock -fbranch-count-reg -fforce-addr \
-				-fforce-mem"
-        		;;
-		3.0*)
-			# -funroll-loops seems to produce buggy code with gcc 3.0.3
-			OPTIMIZATION="-O -fomit-frame-pointer -ffast-math"
-			OPTIMIZATION_FULL="-fmove-all-movables -freduce-all-givs \
-				-fbranch-count-reg -fforce-addr -fforce-mem"
-			;;
-		3.*|4.0.*|4.1.*)
-			# -fomit-frame-pointer seems to be buggy on cygwin
-			case ${host_os} in
-			*cygwin*)
-				OMIT_FRAME_POINTER=
-				;;
-			*)
-				OMIT_FRAME_POINTER=-fomit-frame-pointer
-				;;
-			esac
-	
-			OPTIMIZATION="-O3 ${OMIT_FRAME_POINTER} -ffast-math"
-			OPTIMIZATION_FULL="-fmove-all-movables -freduce-all-givs \
-				-fbranch-count-reg -fforce-addr -fforce-mem"
-			;;
-		[[456789]].*|1[[0-9]].*)
-			OPTIMIZATION="-O3 -fomit-frame-pointer -ffast-math"
-			OPTIMIZATION_FULL="-fbranch-count-reg -fforce-addr"
-			;;
-		*)
-			# default
-			OPTIMIZATION="-O3 ${OMIT_FRAME_POINTER} -ffast-math \
-				-funroll-loops"
-			OPTIMIZATION_FULL="-fbranch-count-reg -fforce-addr"
-			;;
-		esac
-
-		# GCC version independend generic options
-		OPTIMIZATION_NORM="-fschedule-insns2"
-	fi
-
-
-	# generic CPU specific options
-	case ${host_cpu} in
-	sparc)
-		case "${GCC_version}" in
-		3.0*)
-			;;
-		[[3456789]].*|1[[0-9]].*)
-			# doesn't work on 3.0.x, but on 3.[12] and
-			# hopefully on every other release after that too
-			if test -x /usr/bin/isalist; then
-				/usr/bin/isalist | grep sparcv8plus \
-					>/dev/null 2>&1 && \
-					OPTIMIZATION="${OPTIMIZATION} \
-						-mcpu=ultrasparc \
-						-mtune=ultrasparc"
-			fi
-			;;
-		esac
-		;;
-	*86)
-		case "${GCC_version}" in
-		[[3456789]].*|1[[0-9]].*)
-			OPTIMIZATION="${OPTIMIZATION} \
-				-maccumulate-outgoing-args"
-			;;
-		esac
-		;;
-	esac
-
-	expopt_msg_result_printed=no
 	case "${CONFIG_EXPOPT}" in
-	no)
-		# if someone supplies own CFLAGS, we don't add our own
-		if test "x${ac_save_CFLAGS}" != "x"; then
-			OPTIMIZATION=""
-		fi
-		;;
-	norm|yes)
-		OPTIMIZATION="${OPTIMIZATION} ${OPTIMIZATION_NORM}"
-		;;
-	full)
-		OPTIMIZATION="${OPTIMIZATION} ${OPTIMIZATION_NORM} \
-			${OPTIMIZATION_FULL}"
-
-		if test "${HAVE_GCC}" = "yes"; then
-			# some hardware dependend options
-			case "${GCC_version}" in
-			2.9*|3.*|4.0.*|4.1.*)
-				# "new" GCC, use some "new" CPU specific optimizations
-				# use -mtune instead of -m486 or -mcpu= etc, since they are
-				# deprecated by GCC <rbrito>
-				case ${host_cpu} in
-				*486)
-					OPTIMIZATION="${OPTIMIZATION} -mcpu=i486 \
-						-mfancy-math-387"
-					;;
-				*586)
-					OPTIMIZATION="${OPTIMIZATION} -mcpu=pentium \
-						-march=pentium -mfancy-math-387"
-					;;
-				*686)
-					OPTIMIZATION="${OPTIMIZATION} -mcpu=pentiumpro \
-						-march=pentiumpro -mfancy-math-387 \
-						-malign-double"
-					;;
-				*86)
-					OPTIMIZATION="${OPTIMIZATION} -mfancy-math-387"
-					;;
-				alpha*)
-					OPTIMIZATION="${OPTIMIZATION} -mfp-regs"
-					AC_DEFINE(FLOAT, double, double is faster than float on Alpha)
-					# add "-mcpu=21164a -Wa,-m21164a" to optimize
-					# for 21164a (ev56) CPU
-					;;
-				*)
-					OPTIMIZATION="${OPTIMIZATION} -fdelayed-branch"
-					;;
-				esac
-				;;
-			[[456789]].*|1[[0-9]].*)
-				case ${host_cpu} in
-				*486)
-					OPTIMIZATION="${OPTIMIZATION} -march=i486"
-					;;
-				*586)
-					OPTIMIZATION="${OPTIMIZATION} -march=i586 \
-						-mtune=native"
-					;;
-				*686)
-					OPTIMIZATION="${OPTIMIZATION} -march=i686 \
-						-mtune=native"
-					;;
-				arm*-gnueabi)
-					if [ -z "$(echo ${GCC_version} | awk '/4\.0/')" ]; then
-						# Work round buggy softfloat optimization in ARM EABI compilers
-						# -gnueabi in only gcc-4.1 onwards
-						OPTIMIZATION="${OPTIMIZATION} -fno-finite-math-only"
-					fi
-					;;
-				esac
-				;;
-			*)
-				# no special optimization for other versions
-				AC_MSG_RESULT(no)
-				expopt_msg_result_printed=yes
-				AC_MSG_WARN(LAME doesn't know about your version (${GCC_version}) of gcc, please report it to lame-dev@lists.sourceforge.net. Please make sure you try the latest LAME version first!)
-				;;
-			esac
-		fi
+	no|norm|yes)
 		;;
 	*)
-		AC_MSG_ERROR(bad value �${CONFIG_EXPOPT}� for expopt option)
+		AC_MSG_ERROR([bad value ${CONFIG_EXPOPT} for --enable-expopt])
 		;;
 	esac
 
+	# Base optimization, applied unless the user passed their own CFLAGS.
+	#   -O3                          aggressive optimization
+	#   -fomit-frame-pointer         free a register (implied by -O on most
+	#                                modern targets, useful on older ones)
+	#   -ffast-math                  relax IEEE semantics - LAME's DSP code
+	#                                is validated with this and relies on
+	#                                the speed
+	#   -fno-semantic-interposition  let the shared libmp3lame inline its
+	#                                own calls instead of going through the
+	#                                PLT (gcc; harmless no-op elsewhere)
+	if test "x${ac_save_CFLAGS}" = "x"; then
+		LAME_CHECK_CFLAG([-O3], [OPTIMIZATION])
+		LAME_CHECK_CFLAG([-fomit-frame-pointer], [OPTIMIZATION])
+		LAME_CHECK_CFLAG([-ffast-math], [OPTIMIZATION])
+		LAME_CHECK_CFLAG([-fno-semantic-interposition], [OPTIMIZATION])
 
-	if test "x${HAVE_CLANG}" = "xyes"; then
-		case "${CLANG_VERSION}" in
-		3.[[89]]*|[[45]].*|1[[0-9]].*)
-			OPTIMIZATION="-Ofast"
+		case "${CONFIG_EXPOPT}" in
+		norm|yes)
+			# extra, experimental optimization
+			LAME_CHECK_CFLAG([-funroll-loops], [OPTIMIZATION])
+			LAME_CHECK_CFLAG([-fschedule-insns2], [OPTIMIZATION])
+			;;
+		esac
+	fi
+
+	# --enable-native tuning.
+	if test "x${enable_native}" = "xyes"; then
+		LAME_CHECK_CFLAG([-march=native], [OPTIMIZATION])
+		LAME_CHECK_CFLAG([-mtune=native], [OPTIMIZATION])
+	fi
+
+	# Security hardening (default on).  Every flag is probed, so any that
+	# the toolchain does not support is simply skipped.
+	if test "x${enable_hardening}" != "xno"; then
+		# Compile-time hardening, applied to the whole build:
+		#   _FORTIFY_SOURCE          runtime checks for common libc buffer
+		#                            overflows (needs optimization, which
+		#                            the probe supplies)
+		#   -fstack-protector-strong stack-smashing canaries
+		#   -fstack-clash-protection guard against stack-clash attacks
+		#   -fcf-protection=full     control-flow integrity (x86 CET)
+		LAME_CHECK_CFLAG([-U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=2], [HARDENING_CFLAGS])
+		LAME_CHECK_CFLAG([-fstack-protector-strong], [HARDENING_CFLAGS])
+		LAME_CHECK_CFLAG([-fstack-clash-protection], [HARDENING_CFLAGS])
+		LAME_CHECK_CFLAG([-fcf-protection=full], [HARDENING_CFLAGS])
+
+		# Link-time hardening:
+		#   -z relro / -z now        full RELRO (relocations read-only,
+		#                            resolved at load time)
+		#   -z noexecstack           non-executable stack
+		LAME_CHECK_LDFLAG([-Wl,-z,relro], [HARDENING_LDFLAGS])
+		LAME_CHECK_LDFLAG([-Wl,-z,now], [HARDENING_LDFLAGS])
+		LAME_CHECK_LDFLAG([-Wl,-z,noexecstack], [HARDENING_LDFLAGS])
+
+		# Build the frontend programs as position-independent executables,
+		# but only when they are dynamically linked: PIE is incompatible
+		# with the statically-linked default frontend (its libmp3lame
+		# archive objects are not built PIC).  The shared library itself
+		# is already built -fPIC by libtool and needs nothing here.
+		case "x${FRONTEND_LDFLAGS}" in
+		*-static*)
 			;;
 		*)
-			OPTIMIZATION="-O3"
+			LAME_CHECK_CFLAG([-fPIE], [HARDENING_FE_CFLAGS])
+			LAME_CHECK_LDFLAG([-fPIE -pie], [HARDENING_FE_LDFLAGS])
 			;;
 		esac
 
-		# generic CPU specific options
-		case ${host_cpu} in
-		*486)
-			OPTIMIZATION="${OPTIMIZATION} -march=i486"
-			;;
-		*586)
-			OPTIMIZATION="${OPTIMIZATION} -march=i586 \
-				-mtune=native"
-			;;
-		*686)
-			OPTIMIZATION="${OPTIMIZATION} -march=i686 \
-				-mtune=native"
-			;;
-		esac
-
-		# if someone supplies own CFLAGS, we don't add our own
-		if test "x${ac_save_CFLAGS}" != "x"; then
-			OPTIMIZATION=""
-		fi
+		CFLAGS="${CFLAGS} ${HARDENING_CFLAGS}"
+		LDFLAGS="${LDFLAGS} ${HARDENING_LDFLAGS}"
+		FRONTEND_CFLAGS="${FRONTEND_CFLAGS} ${HARDENING_FE_CFLAGS}"
+		FRONTEND_LDFLAGS="${FRONTEND_LDFLAGS} ${HARDENING_FE_LDFLAGS}"
 	fi
-
-
-	if test "${expopt_msg_result_printed}" = "no" ; then
-		AC_MSG_RESULT(${CONFIG_EXPOPT})
-	fi
-else
-	AC_MSG_RESULT(no)
 fi
 
 
@@ -1299,7 +1283,26 @@ AC_SUBST(CPUCCODE)
 
 AC_SUBST(CONFIG_DEFS)
 
+dnl ### unit tests (CMocka) ###
+dnl Off by default: a plain build is completely unaffected. When explicitly
+dnl requested, require CMocka via pkg-config and hard-fail if it is missing,
+dnl rather than silently configuring a test target that builds nothing.
+AC_MSG_CHECKING(whether to build unit tests)
+AC_ARG_ENABLE(unit-tests,
+  [AS_HELP_STRING([--enable-unit-tests],
+    [build the CMocka-based unit tests, run with "make check" [default=no]])],
+  [enable_unit_tests="${enableval}"], [enable_unit_tests=no])
+AC_MSG_RESULT(${enable_unit_tests})
+if test "x${enable_unit_tests}" = "xyes"; then
+	PKG_CHECK_MODULES([CMOCKA], [cmocka], [],
+	  [AC_MSG_ERROR([--enable-unit-tests was given, but the CMocka unit-test library was not found by pkg-config. Install CMocka (e.g. libcmocka-dev / sysutils/cmocka / mingw-w64-cmocka) or configure without --enable-unit-tests.])])
+fi
+AM_CONDITIONAL([ENABLE_UNIT_TESTS], [test "x${enable_unit_tests}" = "xyes"])
+
+
 AC_CONFIG_FILES([Makefile \
+		 test/Makefile \
+		 test/unit/Makefile \
 		 libmp3lame/Makefile \
 		 libmp3lame/i386/Makefile \
 		 libmp3lame/lame.pc \
