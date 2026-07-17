@@ -66,13 +66,6 @@
 //											only to CLI encoder
 //			NOANALYSIS					1 for building without hooks for the
 //											MP3 frame analyzer
-//			HAVE_MPGLIB					1 for building with MP3 decoding library.
-//											Note MPGLIB, unlike LAME itself, is
-//											GPL as opposed to LGPL and thus unsuitable
-//											for compilation into a DLL that would be used
-//											from a closed-source app.
-//			USE_LAYER_1					1 for building layer-1 decoding into MPGLIB
-//			USE_LAYER_2					1 for building layer-2 decoding into MPGLIB
 //			HAVE_VORBIS					1 for building vorbis support
 //			NDEBUG						1 for building with debug info
 //			BRHIST						1 for histogram display in CLI encoder
