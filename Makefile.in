@@ -234,7 +234,6 @@ CONFIG_MATH_LIB = @CONFIG_MATH_LIB@
 CPP = @CPP@
 CPPFLAGS = @CPPFLAGS@
 CPUCCODE = @CPUCCODE@
-CPUTYPE = @CPUTYPE@
 CSCOPE = @CSCOPE@
 CTAGS = @CTAGS@
 CYGPATH_W = @CYGPATH_W@
@@ -286,8 +285,7 @@ MAKEDEP = @MAKEDEP@
 MAKEINFO = @MAKEINFO@
 MANIFEST_TOOL = @MANIFEST_TOOL@
 MKDIR_P = @MKDIR_P@
-NASM = @NASM@
-NASM_FORMAT = @NASM_FORMAT@
+MP3RTP_MAN = @MP3RTP_MAN@
 NM = @NM@
 NMEDIT = @NMEDIT@
 OBJDUMP = @OBJDUMP@
@@ -313,6 +311,7 @@ SHELL = @SHELL@
 SNDFILE_CFLAGS = @SNDFILE_CFLAGS@
 SNDFILE_LIBS = @SNDFILE_LIBS@
 STRIP = @STRIP@
+VECTOR_SSE2_FLAGS = @VECTOR_SSE2_FLAGS@
 VERSION = @VERSION@
 WITH_FRONTEND = @WITH_FRONTEND@
 WITH_MP3RTP = @WITH_MP3RTP@
@@ -388,7 +387,6 @@ EXTRA_DIST = \
 	INSTALL.configure \
 	LICENSE \
 	Makefile.MSVC \
-	Makefile.unix \
 	Makefile.am.global \
 	README.WINGTK \
 	STYLEGUIDE \
@@ -405,7 +403,12 @@ EXTRA_DIST = \
 	maintainer/setup-windows-deps.ps1 \
 	maintainer/perf-compare.sh \
 	maintainer/setup-quality-corpus.sh \
-	maintainer/quality-compare.py
+	maintainer/quality-compare.py \
+	maintainer/gen-coverage-matrix.sh \
+	maintainer/coverage-run.sh \
+	maintainer/coverage-mkinputs.py \
+	maintainer/coverage-report.py \
+	maintainer/coverage-workload.txt
 
 all: config.h
 	$(MAKE) $(AM_MAKEFLAGS) all-recursive

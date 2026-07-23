@@ -37,7 +37,7 @@
 #include "bitstream.h"
 #include "vbrquantize.h"
 #include "quantize.h"
-#ifdef HAVE_XMMINTRIN_H
+#ifdef HAVE_SSE2_INTRINSICS
 #include "vector/lame_intrin.h"
 #endif
 
@@ -94,13 +94,12 @@ init_xrpow_core_init(lame_internal_flags * const gfc)
 {
     gfc->init_xrpow_core = init_xrpow_core_c;
 
-#if defined(HAVE_XMMINTRIN_H)
-    if (gfc->CPU_features.SSE)
-        gfc->init_xrpow_core = init_xrpow_core_sse;
-#endif
-#ifndef HAVE_NASM
+#if defined(HAVE_SSE2_INTRINSICS)
 #if defined(MIN_ARCH_SSE) || defined(__x86_64__)
     gfc->init_xrpow_core = init_xrpow_core_sse;
+#else
+    if (vector_implementation(gfc) >= VECTOR_IMPL_SSE2)
+        gfc->init_xrpow_core = init_xrpow_core_sse;
 #endif
 #endif
 }
@@ -624,7 +623,7 @@ quant_compare(const int quant_comp,
 
     case 8:
         calc->max_noise = get_klemm_noise(distort, gi);
-        /*lint --fallthrough */
+        /* fall through */
     case 1:
         better = calc->max_noise < best->max_noise;
         break;
@@ -895,7 +894,12 @@ inc_subblock_gain(const lame_internal_flags * const gfc, gr_info * const cod_inf
 
             scalefac[sfb] = 0;
             {
-                int const gain = 210 + (s << (cod_info->scalefac_scale + 1));
+                /* s is negative here (the s >= 0 case continued above), so the
+                   original s << (scalefac_scale + 1) was a shift of a negative
+                   value. The intent is s * 2^(scalefac_scale + 1); expressing it
+                   as a multiply by a power of two is defined and value-identical
+                   (the small negative s cannot overflow). */
+                int const gain = 210 + s * (1 << (cod_info->scalefac_scale + 1));
                 amp = IPOW20(gain);
             }
             j += width * (window + 1);

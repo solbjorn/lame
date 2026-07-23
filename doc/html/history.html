@@ -135,6 +135,153 @@
 			        order, so it could select a library whose header and
 			        binary disagree - which broke the build on MSYS2. Bug
 			        ticket <i class="ticket">[ #436 ]</i>.</li>
+			    <li><span class="security">Reject an interleaved
+			        encode on a session with a single input channel.
+			        The interleaved entry points read two channels
+			        from one buffer; on a mono session that read ran
+			        one channel's worth of samples past the end of the
+			        buffer. This only happens when a caller drives the
+			        library against its documented contract - LAME's
+			        own front end uses the non-interleaved entry
+			        points, and the Windows modules (<i>Dll</i>,
+			        <i>ACM</i>, <i>dshow</i>) take the interleaved path
+			        only for stereo - so no shipped LAME program
+			        reaches it; the library now returns an error rather
+			        than read past the buffer, for the sake of any
+			        other caller that makes this mistake. Bug ticket
+			        <i class="ticket">[ #522 ]</i>.</span></li>
+			    <li>Removed the unused bundled mpglib and Amiga MPEGA
+			        decoder paths. Decoding has gone through libmpg123
+			        since 3.101, so no build still selected them.
+			        Dropping the dead code also removes an unbounded
+			        recursion in the old header search that a crafted
+			        stream could have driven; the public decode
+			        interface is unchanged.</li>
+			    <li>Removed the long-deprecated <i>--ogginput</i>
+			        option; Ogg Vorbis input support was dropped long
+			        ago and the option only printed a notice.</li>
+			    <li>Let the terminal library hold the console
+			        progress display's capability strings instead of
+			        copying them into a fixed-size buffer, which a
+			        capability string longer than the buffer could
+			        overflow. This needs the terminal description
+			        itself to be hostile, which requires control of the
+			        terminal database or the <i>TERM</i> environment;
+			        anyone with that already runs with at least the
+			        privileges of the lame process, so this is hygiene
+			        rather than a crossed privilege boundary.</li>
+			    <li>Do not write an ID3v2 tag whose length does not fit
+			        the 28-bit tag-size field. A very large tag, for
+			        instance from oversized embedded album art, would
+			        otherwise record a wrapped length and be
+			        unparseable; no tag is produced in that case.</li>
+			    <li>Removed closing the output file on two mp3rtp
+			        startup error paths that run before it is
+			        opened.</li>
+			    <li>Recognize the documented unknown-length sentinel
+			        when reporting the total frame count, so an
+			        unknown-length stream no longer shows a bogus total
+			        and estimate where <i>long</i> is wider than 32 bits.
+			        Patch by Maya R. Odinezenko.</li>
+			    <li>Bound the frame-count estimates to the <i>int</i>
+			        they are returned in, so a declared length large
+			        enough to exceed it no longer overflows the
+			        estimate.</li>
+			    <li>Write the full audio play-length in the ID3v2 tag
+			        instead of clamping it to about 49.7 days.</li>
+			    <li>Detect a truncated WAV or AIFF header instead of
+			        reading past it. A file that ended partway through
+			        its header was parsed together with whatever bytes
+			        happened to follow in memory; such a file is now
+			        rejected as corrupt.</li>
+			    <li>Report a write error when decoding to a file. If
+			        the decoded output could not be fully written - a
+			        full disk, for example - <i>--decode</i> now fails
+			        instead of finishing silently with a truncated
+			        file.</li>
+			    <li>Fixed converting a short 8.3 path back to its long
+			        form on Windows, which could leave the resulting
+			        name unterminated or copy the wrong number of
+			        characters.</li>
+			    <li>Reject an extensible WAV header that describes too
+			        small an extension or claims more valid bits than
+			        its samples hold, and name a 64 bit floating point
+			        AIFF file as an unsupported format instead of
+			        failing as though it were corrupt. A block
+			        alignment or byte rate that disagrees with the rest
+			        of the header - which many writers get wrong - is
+			        still accepted and is only reported under
+			        <i>--verbose</i>.</li>
+			    <li>Build without compiler warnings on GCC, Clang and
+			        MSVC, including the 64 bit narrowing conversions
+			        and the obsolete empty parameter lists the
+			        frontend still carried. Most were harmless, but
+			        the cleanup also corrected some undefined
+			        behaviour. The encoder output is unchanged. The
+			        narrowing conversions and part of the parameter
+			        list cleanup are based on patches by Maya R.
+			        Odinezenko.</li>
+			    <li>Read the declared length of an input whose sample
+			        count does not fit in 32 bits. Where long is
+			        wider than int such a length was truncated before
+			        use, so reading stopped at the wrong point.</li>
+			    <li>In maintainer mode the GCC/Clang build compiles
+			        with additional warnings enabled and treated as
+			        errors, so a newly introduced warning fails the
+			        build. This applies only to
+			        <i>--enable-maintainer-mode</i>; ordinary and
+			        release builds are unaffected.</li>
+			    <li><span class="speed">The vectorized routines are now
+			        used on every x86 build. They have been part of LAME
+			        since 3.98, but the two checks that could switch them
+			        on only ever succeeded on 64 bit Windows, and even
+			        there only one of the two routines was reached, so
+			        Linux, FreeBSD, macOS and every 32 bit build ran the
+			        plain C code. Both are now selected from the
+			        processor's own feature bits at run time, so one
+			        binary serves machines with and without SSE2 and no
+			        build option or assembler is involved.
+			        <i>lame --verbose</i> reports what the machine it runs
+			        on actually got. How much this gains depends on the
+			        processor rather than on the setting: measured about
+			        5 to 9 percent on a Xeon X5675, and 0 to 3 percent on
+			        a Core i7-10700, where the compiler already generates
+			        comparable code by itself. The output can differ in
+			        the last bits from a build that used the C path;
+			        measured audio quality is unchanged.</span></li>
+			    <li><span class="speed">32 bit x86 builds get the
+			        vectorized routines back. They were switched off in
+			        3.100 to repair a build failure, because at that time
+			        the code needed the whole compilation to target SSE2.
+			        3.101 removed that requirement, but the check was not
+			        revisited, so two further releases went without them.
+			        The check now asks what the code actually needs, and
+			        arranges the rest itself where a compiler needs
+			        help.</span></li>
+			    <li>Removed the hand written assembler routines, which
+			        the vectorized C routines above replace, together with
+			        everything that selected them: the
+			        <i>--enable-nasm</i> option and the NASM and SSE2
+			        Visual Studio configurations. They needed an
+			        <b>external assembler</b> to build, could not be used
+			        on any 64 bit host, targeted an instruction set
+			        removed from processors in 2010, and half of the
+			        files had not been assembled by any build system in
+			        this century. Building LAME needs no external
+			        assembler on any platform now. <i>--noasm</i> keeps
+			        its three values, and <i>sse</i> still switches the
+			        vectorized routines off, which is how they are
+			        compared against the plain C code.</li>
+			    <li>Added a manual page for <i>mp3rtp</i>, which had none.
+			        It is installed where the program itself is, and is
+			        part of every distribution regardless of how the tree
+			        it was made from was configured. Manual page
+			        contributed by Fabian Greffrath.</li>
+			    <li>Fixed <i>mp3rtp</i> cutting its destination address
+			        short in builds without IPv6. Addresses longer than
+			        eleven characters were truncated and the stream went to
+			        a different host than the one given, without a
+			        message.</li>
 		</ul>
             </li>
 	</ul>

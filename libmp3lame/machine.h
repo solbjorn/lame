@@ -49,6 +49,15 @@ char   *strchr(), *strrchr();
 #endif
 #include <limits.h>
 
+/* Mark a function parameter that is intentionally unused (e.g. in a stub
+   implementation or a compile-time-selected code path). Expands to nothing
+   where the compiler has no such attribute, including MSVC. */
+#if defined(__GNUC__) || defined(__clang__)
+# define LAME_UNUSED __attribute__((unused))
+#else
+# define LAME_UNUSED
+#endif
+
 #include <ctype.h>
 
 #ifdef HAVE_ERRNO_H
@@ -110,6 +119,10 @@ char   *strchr(), *strrchr();
 #if    defined(_MSC_VER)
 # pragma warning( disable : 4244 )
 /*# pragma warning( disable : 4305 ) */
+/* 4100: unreferenced formal parameter. Intentional in stub/compatibility
+   entry points; the GCC/Clang -Wunused-parameter build is where a genuinely
+   unused parameter is caught (see LAME_UNUSED). */
+# pragma warning( disable : 4100 )
 #endif
 
 /*

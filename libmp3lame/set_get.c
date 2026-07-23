@@ -1723,7 +1723,7 @@ float
 lame_get_interChRatio(const lame_global_flags * gfp)
 {
     if (is_lame_global_flags_valid(gfp)) {
-        assert((0 <= gfp->interChRatio && gfp->interChRatio <= 1.0) || EQ(gfp->interChRatio, -1));
+        assert((0 <= gfp->interChRatio && gfp->interChRatio <= 1.0) || EQ(gfp->interChRatio, -1.0));
         return gfp->interChRatio;
     }
     return 0;
@@ -2136,7 +2136,12 @@ lame_get_totalframes(const lame_global_flags * gfp)
             unsigned long end_padding = 0;
             int frames = 0;
 
-            if (pcm_samples_to_encode == (0ul-1ul))
+            /* compare against the documented unknown sentinel (lame.h:
+               default = 2^32-1); the (0ul-1ul) test alone matches it only
+               where long is 32-bit, and is kept to preserve existing LP64
+               behavior */
+            if (pcm_samples_to_encode == MAX_U_32_NUM
+                || pcm_samples_to_encode == (0ul-1ul))
                 return 0; /* unknown */
 
             /* estimate based on user set num_samples: */
@@ -2158,6 +2163,8 @@ lame_get_totalframes(const lame_global_flags * gfp)
                 pcm_samples_to_encode = ceil(resampled_samples_to_encode);
             }
             else {
+                if (pcm_samples_to_encode / pcm_samples_per_frame >= (unsigned long)(INT_MAX-2))
+                    return 0; /* overflow, happens eventually, no estimate! */
                 frames = pcm_samples_to_encode / pcm_samples_per_frame;
                 pcm_samples_to_encode -= frames * pcm_samples_per_frame;
             }

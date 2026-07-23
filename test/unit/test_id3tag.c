@@ -268,6 +268,101 @@ test_v2_only_suppresses_v1(void **state)
     assert_int_equal(lame_get_id3v1_tag(gfp, tagbuf, sizeof tagbuf), 0);
 }
 
+/* --- ID3v2 28-bit size-field limit ------------------------------------- */
+
+/**
+ * @brief A tag whose size exceeds the 28-bit synchsafe field is refused.
+ *
+ * The tag length is stored in four synchsafe bytes, 28 bits in all, so a tag
+ * larger than that cannot state its own size and must not be written. This
+ * drives the size over the limit with a padding request, which needs no large
+ * allocation, and asserts no tag is produced.
+ */
+static void
+test_v2_size_over_synchsafe_limit_rejected(void **state)
+{
+    lame_t gfp = (lame_t) *state;
+    id3tag_add_v2(gfp);
+    id3tag_set_title(gfp, "X");
+    /* One past the largest value the 28-bit field can hold. */
+    id3tag_set_pad(gfp, (size_t) 0x10000000);
+    assert_int_equal(lame_get_id3v2_tag(gfp, NULL, 0), 0);
+}
+
+/**
+ * @brief The album-art path, the reported vector, is refused past the limit.
+ *
+ * The size is dominated here by a caller-supplied album-art buffer rather than
+ * padding, matching the way the overflow was reported. The image is generated
+ * in memory (about 256 MB, with a valid JPEG signature so it is accepted) and
+ * freed as soon as the library has taken its own copy.
+ */
+static void
+test_v2_albumart_over_synchsafe_limit_rejected(void **state)
+{
+    lame_t gfp = (lame_t) *state;
+    size_t  art_size = (size_t) 0x10000000; /* past the 28-bit field on its own */
+    char   *art = malloc(art_size);
+
+    if (art == NULL) {
+        skip(); /* not enough memory to exercise the >256 MB path */
+        return;
+    }
+    art[0] = (char) 0xFF; /* JPEG SOI, so id3tag_set_albumart accepts it */
+    art[1] = (char) 0xD8;
+    art[2] = (char) 0xFF;
+    assert_int_equal(id3tag_set_albumart(gfp, art, art_size), 0);
+    free(art); /* the library holds its own copy now */
+    assert_int_equal(lame_get_id3v2_tag(gfp, NULL, 0), 0);
+}
+
+/**
+ * @brief A tag that fits within the field is still written.
+ *
+ * The guard must refuse only the tags that cannot be represented; an ordinary
+ * padded tag has to keep working.
+ */
+static void
+test_v2_size_within_limit_written(void **state)
+{
+    lame_t gfp = (lame_t) *state;
+    id3tag_add_v2(gfp);
+    id3tag_set_title(gfp, "MyTitle");
+    id3tag_set_pad(gfp, (size_t) 1024);
+    assert_true(get_v2(gfp) > 10);
+}
+
+/* --- ID3v2 auto play-length (TLEN) ------------------------------------- */
+
+/**
+ * @brief A play-length past 2^32-1 ms is written in full, not clamped.
+ *
+ * The TLEN value is derived from num_samples, so a long enough declared length
+ * yields a duration beyond a 32-bit millisecond count. This is only
+ * representable where unsigned long is wider than 32 bits (num_samples must
+ * hold the sample count), so it is skipped elsewhere. The length is set on the
+ * config, not encoded, so no audio is processed.
+ */
+static void
+test_v2_playlength_beyond_32bit(void **state)
+{
+    lame_t gfp = (lame_t) *state;
+    size_t sz;
+    if (sizeof(unsigned long) < 8) {
+        skip(); /* num_samples cannot express a >2^32-1 ms length here */
+        return;
+    }
+    lame_set_in_samplerate(gfp, 8000);
+    lame_set_num_channels(gfp, 2);
+    lame_set_num_samples(gfp, 40000000000UL); /* 4e10 @ 8 kHz -> 5e9 ms */
+    id3tag_add_v2(gfp);
+    id3tag_set_title(gfp, "MyTitle");
+    assert_int_equal(lame_init_params(gfp), 0);
+    sz = get_v2(gfp);
+    assert_true(mem_contains(tagbuf, sz, "5000000000"));  /* full value */
+    assert_false(mem_contains(tagbuf, sz, "4294967295")); /* not the old clamp */
+}
+
 /* --- fixture ----------------------------------------------------------- */
 
 /** @brief Per-test fixture: fresh lame_t into @p state. */
@@ -309,6 +404,10 @@ main(void)
         ID3_TEST(test_v1_basic),
         ID3_TEST(test_v1_only_suppresses_v2),
         ID3_TEST(test_v2_only_suppresses_v1),
+        ID3_TEST(test_v2_size_over_synchsafe_limit_rejected),
+        ID3_TEST(test_v2_albumart_over_synchsafe_limit_rejected),
+        ID3_TEST(test_v2_size_within_limit_written),
+        ID3_TEST(test_v2_playlength_beyond_32bit),
     };
     return cmocka_run_group_tests(tests, NULL, NULL);
 }

@@ -1,6 +1,16 @@
 #ifndef CONFIGMS_H_INCLUDED
 #define CONFIGMS_H_INCLUDED
 
+/* Silence the MSVC CRT deprecation warning (C4996) for the standard ISO C
+   library functions LAME uses.  The "secure" _s replacements MSVC suggests are
+   not portable, so the code stays on the standard names.  This header is the
+   first include in every translation unit, so the definition takes effect
+   before any CRT header is parsed.  Guarded so a build that already defines it
+   on the command line does not trigger a redefinition warning. */
+#ifndef _CRT_SECURE_NO_WARNINGS
+# define _CRT_SECURE_NO_WARNINGS 1
+#endif
+
 /* The number of bytes in a double.  */
 #define SIZEOF_DOUBLE 8
 
@@ -102,19 +112,15 @@ void acm_Free( void * mem);
 #define LAME_LIBRARY_BUILD
 
 
-#ifdef HAVE_NASM
-    #if (defined(__ICL) && (__ICL >= 450))
-        #define HAVE_XMMINTRIN_H
-    #elif defined(_MSC_VER)
-        #include <malloc.h>
-        #ifdef _mm_malloc
-            #define HAVE_XMMINTRIN_H
-        #endif
-    #endif
-#endif
-
-#if defined(_M_X64) && !defined(HAVE_XMMINTRIN_H)
-        #define HAVE_XMMINTRIN_H
+/* The vector routines are available on every x86 target here: unlike GCC and
+ * Clang, which reject the intrinsics unless the function opts into the
+ * instruction set, this compiler accepts them whatever /arch is in force.  So
+ * the routines are always built and the CPU decides at run time whether they
+ * are used, exactly as on the Autotools side.
+ */
+#if defined(_M_IX86) || defined(_M_X64) || defined(_M_AMD64) \
+ || (defined(__ICL) && (__ICL >= 450))
+    #define HAVE_SSE2_INTRINSICS
 #endif
 
 #endif

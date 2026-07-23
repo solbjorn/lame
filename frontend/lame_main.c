@@ -218,7 +218,9 @@ lame_decoder_loop(lame_t gfp, FILE * outf, char *inPath, char *outPath)
     }
 
     if (0 == global_decoder.disable_wav_header)
-        WriteWaveHeader(outf, 0x7FFFFFFF, lame_get_in_samplerate(gfp), tmp_num_channels, 16);
+        if (WriteWaveHeader(outf, 0x7FFFFFFF, lame_get_in_samplerate(gfp), tmp_num_channels, 16)
+            < 0)
+            goto write_failure;
     /* unknown size, so write maximum 32 bit signed value */
 
     wavsize = 0;
@@ -229,7 +231,8 @@ lame_decoder_loop(lame_t gfp, FILE * outf, char *inPath, char *outPath)
             if (dp != 0) {
                 decoder_progress(dp, &global_decoder.mp3input_data, iread);
             }
-            put_audio16(outf, Buffer, iread, tmp_num_channels);
+            if (put_audio16(outf, Buffer, iread, tmp_num_channels) < 0)
+                goto write_failure;
         }
     } while (iread > 0);
 
@@ -251,11 +254,20 @@ lame_decoder_loop(lame_t gfp, FILE * outf, char *inPath, char *outPath)
     /* if outf is seekable, rewind and adjust length */
     if (!global_decoder.disable_wav_header && strcmp("-", outPath)
         && !fseek(outf, 0l, SEEK_SET))
-        WriteWaveHeader(outf, (int) wavsize, lame_get_in_samplerate(gfp), tmp_num_channels, 16);
+        if (WriteWaveHeader(outf, (int) wavsize, lame_get_in_samplerate(gfp), tmp_num_channels, 16)
+            < 0)
+            goto write_failure;
 
     if (dp != 0)
         decoder_progress_finish(dp);
     return 0;
+
+  write_failure:
+    if (dp != 0)
+        decoder_progress_finish(dp);
+    if (global_ui_config.silent < 10)
+        error_printf("Error writing to the output file\n");
+    return -1;
 }
 
 static int
@@ -413,8 +425,8 @@ lame_encoder_loop(lame_global_flags * gf, FILE * outf, int nogap, char *inPath, 
         unsigned char* id3v2tag = getOldTag(gf);
         id3v2_size = sizeOfOldTag(gf);
         if ( id3v2_size > 0 ) {
-            size_t owrite = fwrite(id3v2tag, 1, id3v2_size, outf);
-            if (owrite != id3v2_size) {
+            size_t written = fwrite(id3v2tag, 1, id3v2_size, outf);
+            if (written != id3v2_size) {
                 encoder_progress_end(gf);
                 error_printf("Error writing ID3v2 tag \n");
                 return 1;

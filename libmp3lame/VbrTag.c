@@ -218,7 +218,7 @@ IsVbrTag(const unsigned char *buf)
     return (isTag0 || isTag1);
 }
 
-#define SHIFT_IN_BITS_VALUE(x,n,v) ( x = (x << (n)) | ( (v) & ~(-1 << (n)) ) )
+#define SHIFT_IN_BITS_VALUE(x,n,v) ( x = (x << (n)) | ( (v) & ~(~0u << (n)) ) )
 
 static void
 setLameTagFrameHeader(lame_internal_flags const *gfc, unsigned char *buffer)
@@ -394,10 +394,8 @@ GetVbrTag(VBRTAGDATA * pTagData, const unsigned char *buf)
     }
 
     if (head_flags & TOC_FLAG) {
-        if (pTagData->toc != NULL) {
-            for (i = 0; i < NUMTOCENTRIES; i++)
-                pTagData->toc[i] = buf[i];
-        }
+        for (i = 0; i < NUMTOCENTRIES; i++)
+            pTagData->toc[i] = buf[i];
         buf += NUMTOCENTRIES;
     }
 
@@ -435,12 +433,10 @@ GetVbrTag(VBRTAGDATA * pTagData, const unsigned char *buf)
     fprintf(stderr, "enc_delay  = %i \n", enc_delay);
     fprintf(stderr, "enc_padding= %i \n", enc_padding);
     fprintf(stderr, "toc:\n");
-    if (pTagData->toc != NULL) {
-        for (i = 0; i < NUMTOCENTRIES; i++) {
-            if ((i % 10) == 0)
-                fprintf(stderr, "\n");
-            fprintf(stderr, " %3d", (int) (pTagData->toc[i]));
-        }
+    for (i = 0; i < NUMTOCENTRIES; i++) {
+        if ((i % 10) == 0)
+            fprintf(stderr, "\n");
+        fprintf(stderr, " %3d", (int) (pTagData->toc[i]));
     }
     fprintf(stderr, "\n***************** END OF VBR TAG INFO ***************\n");
 #endif
@@ -593,7 +589,6 @@ PutLameVBR(lame_global_flags const *gfp, size_t nMusicLength, uint8_t * pbtStrea
     SessionConfig_t const *const cfg = &gfc->cfg;
 
     int     nBytesWritten = 0;
-    int     i;
 
     int     enc_delay = gfc->ov_enc.encoder_delay; /* encoder delay */
     int     enc_padding = gfc->ov_enc.encoder_padding; /* encoder padding  */

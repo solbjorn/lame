@@ -19,7 +19,6 @@ EXTRA_DIST = \
 	INSTALL.configure \
 	LICENSE \
 	Makefile.MSVC \
-	Makefile.unix \
 	Makefile.am.global \
 	README.WINGTK \
 	STYLEGUIDE \
@@ -36,7 +35,12 @@ EXTRA_DIST = \
 	maintainer/setup-windows-deps.ps1 \
 	maintainer/perf-compare.sh \
 	maintainer/setup-quality-corpus.sh \
-	maintainer/quality-compare.py
+	maintainer/quality-compare.py \
+	maintainer/gen-coverage-matrix.sh \
+	maintainer/coverage-run.sh \
+	maintainer/coverage-mkinputs.py \
+	maintainer/coverage-report.py \
+	maintainer/coverage-workload.txt
 
 #
 # The differences depend on the used processor architecture, the used

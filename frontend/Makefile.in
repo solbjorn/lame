@@ -219,7 +219,6 @@ CONFIG_MATH_LIB = @CONFIG_MATH_LIB@
 CPP = @CPP@
 CPPFLAGS = @CPPFLAGS@
 CPUCCODE = @CPUCCODE@
-CPUTYPE = @CPUTYPE@
 CSCOPE = @CSCOPE@
 CTAGS = @CTAGS@
 CYGPATH_W = @CYGPATH_W@
@@ -276,8 +275,7 @@ MAKEDEP = @MAKEDEP@
 MAKEINFO = @MAKEINFO@
 MANIFEST_TOOL = @MANIFEST_TOOL@
 MKDIR_P = @MKDIR_P@
-NASM = @NASM@
-NASM_FORMAT = @NASM_FORMAT@
+MP3RTP_MAN = @MP3RTP_MAN@
 NM = @NM@
 NMEDIT = @NMEDIT@
 OBJDUMP = @OBJDUMP@
@@ -303,6 +301,7 @@ SHELL = @SHELL@
 SNDFILE_CFLAGS = @SNDFILE_CFLAGS@
 SNDFILE_LIBS = @SNDFILE_LIBS@
 STRIP = @STRIP@
+VECTOR_SSE2_FLAGS = @VECTOR_SSE2_FLAGS@
 VERSION = @VERSION@
 WITH_FRONTEND = @WITH_FRONTEND@
 WITH_MP3RTP = @WITH_MP3RTP@
@@ -367,9 +366,6 @@ top_srcdir = @top_srcdir@
 AUTOMAKE_OPTIONS = 1.15 foreign
 bin_PROGRAMS = @WITH_FRONTEND@ @WITH_MP3RTP@ @WITH_MP3X@
 EXTRA_PROGRAMS = lame$(EXEEXT) mp3rtp$(EXEEXT) mp3x$(EXEEXT)
-EXTRA_DIST = \
-	amiga_mpega.c
-
 common_sources = \
 	main.c \
 	brhist.c \
@@ -394,6 +390,13 @@ noinst_HEADERS = \
 lame_SOURCES = lame_main.c $(common_sources)
 mp3rtp_SOURCES = mp3rtp.c rtp.c $(common_sources)
 mp3x_SOURCES = mp3x.c gtkanal.c gpkplotting.c $(common_sources)
+
+# --enable-internal exposes the developer tuning options in parse.c. The macro
+# is defined here (frontend only), not globally, so other consumers of parse.c
+# are unaffected. configure has already forced -static into FRONTEND_LDFLAGS,
+# so the frontend can reach the internal setters, which the shared library does
+# not export.
+@INTERNAL_OPTS_TRUE@AM_CPPFLAGS = -D_ALLOW_INTERNAL_OPTIONS
 mp3x_LDADD = $(LDADD) @GTK_LIBS@
 CLEANFILES = lclint.txt $(EXTRA_PROGRAMS)
 LCLINTFLAGS = \

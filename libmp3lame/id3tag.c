@@ -157,10 +157,15 @@ typedef enum MiscIDs { ID_TXXX = FRAME_ID('T', 'X', 'X', 'X')
 static int
 frame_id_matches(int id, int mask)
 {
-    int     result = 0, i, window = 0xff;
+    /* window is a byte mask that walks up to 0xff000000; keep it unsigned so
+       reaching and shifting past the top byte is a defined wrap rather than a
+       signed overflow / shift of a negative value. The masks are bit patterns,
+       so the results are unchanged. */
+    int     result = 0, i;
+    unsigned int window = 0xff;
     for (i = 0; i < 4; ++i, window <<= 8) {
-        int const mw = (mask & window);
-        int const iw = (id & window);
+        int const mw = (int) (mask & window);
+        int const iw = (int) (id & window);
         if (mw != 0 && mw != iw) {
             result |= iw;
         }
@@ -268,21 +273,22 @@ id3v2AddAudioDuration(lame_t gfp, double ms)
 {
     SessionConfig_t const *const cfg = &gfp->internal_flags->cfg; /* caller checked pointers */
     char    buffer[1024];
-    double const max_ulong = MAX_U_32_NUM;
-    unsigned long playlength_ms;
+    uint64_t const max_ms = (uint64_t) -1;      /* full width of the playlength field */
+    double const max_ms_dbl = (double) max_ms;  /* rounds up past the field, so use >= */
+    uint64_t playlength_ms;
 
     ms *= 1000;
     ms /= cfg->samplerate_in;
-    if (ms > max_ulong) {
-        playlength_ms = max_ulong;
+    if (ms >= max_ms_dbl) {
+        playlength_ms = max_ms;
     }
     else if (ms < 0) {
         playlength_ms = 0;
     }
     else {
-        playlength_ms = ms;
+        playlength_ms = (uint64_t) ms;
     }
-    sprintf(buffer, "%lu", playlength_ms);
+    sprintf(buffer, "%llu", (unsigned long long) playlength_ms);
     copyV1ToV2(gfp, ID_PLAYLENGTH, buffer);
 }
 
@@ -1940,6 +1946,15 @@ lame_get_id3v2_tag(lame_t gfp, unsigned char *buffer, size_t size)
             if (test_tag_spec_flags(gfc, PAD_V2_FLAG)) {
                 /* add some bytes of padding */
                 tag_size += gfc->tag_spec.padding_size;
+            }
+            /* The tag length goes into a 28-bit synchsafe field. A tag larger
+             * than that cannot state its own size, so the four length bytes
+             * would wrap and describe a shorter tag than was written, leaving
+             * the frames after it unparseable. Produce no tag rather than a
+             * corrupt one.
+             */
+            if (tag_size - 10 > 0x0FFFFFFFuL) {
+                return 0;
             }
             if (size < tag_size) {
                 return tag_size;

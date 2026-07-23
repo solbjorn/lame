@@ -186,7 +186,7 @@ strlenMultiByte(char const* str, size_t w)
 }
 
 static char*
-currentCharacterEncoding()
+currentCharacterEncoding(void)
 {
 #ifdef HAVE_LANGINFO_H
     char* cur_code = nl_langinfo(CODESET);
@@ -396,7 +396,7 @@ static int getIntValue(char const* token, char const* arg, int* ptr)
     char *_EndPtr=0;
     long d = strtol(arg, &_EndPtr, 10);
     if (ptr != 0) {
-        *ptr = d;
+        *ptr = (int)d;
     }
     return evaluateArgument(token, arg, _EndPtr);
 }
@@ -789,7 +789,7 @@ long_help(const lame_global_flags * gfp, FILE * const fp, const char *ProgramNam
             "    --ignorelength  ignore file length in WAV header\n"
             "    --gain <arg>    apply Gain adjustment in decibels, range -20.0 to +12.0\n"
            );
-#if (defined HAVE_MPGLIB || defined AMIGA_MPEGA)
+#ifdef HAVE_MPG123
     fprintf(fp,
             "    --mp1input      input file is a MPEG Layer I   file\n"
             "    --mp2input      input file is a MPEG Layer II  file\n"
@@ -948,13 +948,11 @@ long_help(const lame_global_flags * gfp, FILE * const fp, const char *ProgramNam
             "\nMisc:\n    --license       print License information\n\n"
         );
 
-#if defined(HAVE_NASM)
     wait_for(fp, lessmode);
     fprintf(fp,
             "  Platform specific:\n"
-            "    --noasm <instructions> disable assembly optimizations for mmx/3dnow/sse\n");
+            "    --noasm <instructions> disable the vector code for mmx/3dnow/sse\n");
     wait_for(fp, lessmode);
-#endif
 
     display_bitrates(fp);
 
@@ -1619,7 +1617,7 @@ static int dev_only_without_arg(char const* str, char const* token, int* argIgno
 static int
 set_path_arg(char const *const src, char *const dst)
 {
-    int const arg_n = strnlen(src, PATH_MAX);
+    int const arg_n = (int)strnlen(src, PATH_MAX);
     if (arg_n >= PATH_MAX) {
         error_printf("input/output file name too long (limit %d): %s\n",
                      PATH_MAX, src);
@@ -1742,6 +1740,7 @@ parse_args_(lame_global_flags * gfp, int argc, char **argv,
                 T_ELIF("big-endian")
                     global_raw_pcm.in_endian = ByteOrderBigEndian;
 
+#ifdef HAVE_MPG123
                 T_ELIF("mp1input")
                     global_reader.input_format = sf_mp1;
 
@@ -1750,10 +1749,7 @@ parse_args_(lame_global_flags * gfp, int argc, char **argv,
 
                 T_ELIF("mp3input")
                     global_reader.input_format = sf_mp3;
-
-                T_ELIF("ogginput")
-                    error_printf("sorry, vorbis support in LAME is deprecated.\n");
-                return -1;
+#endif
 
                 T_ELIF("decode")
                     (void) lame_set_decode_only(gfp, 1);
@@ -2140,7 +2136,7 @@ parse_args_(lame_global_flags * gfp, int argc, char **argv,
                     nogap_tags = 1;
 
                 T_ELIF("nogapout")
-                    int const arg_n = strnlen(nextArg, PATH_MAX);
+                    int const arg_n = (int)strnlen(nextArg, PATH_MAX);
                     if (arg_n >= PATH_MAX) {
                         error_printf("%s: %s argument length (%d) exceeds limit (%d)\n", ProgramName, token, arg_n, PATH_MAX);
                         return -1;
@@ -2150,7 +2146,7 @@ parse_args_(lame_global_flags * gfp, int argc, char **argv,
                     argUsed = 1;
 
                 T_ELIF("out-dir")
-                    int const arg_n = strnlen(nextArg, PATH_MAX);
+                    int const arg_n = (int)strnlen(nextArg, PATH_MAX);
                     if (arg_n >= PATH_MAX) {
                         error_printf("%s: %s argument length (%d) exceeds limit (%d)\n", ProgramName, token, arg_n, PATH_MAX);
                         return -1;
@@ -2656,7 +2652,7 @@ parse_args_(lame_global_flags * gfp, int argc, char **argv,
     if (global_reader.input_format == sf_unknown)
         global_reader.input_format = filename_to_type(inPath);
 
-#if !(defined HAVE_MPGLIB || defined AMIGA_MPEGA || HAVE_MPG123)
+#if !defined(HAVE_MPG123)
     if (is_mpeg_file_format(global_reader.input_format)) {
         error_printf("Error: libmp3lame not compiled with mpg123 *decoding* support \n");
         return -1;

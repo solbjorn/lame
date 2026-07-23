@@ -647,13 +647,12 @@ CMOCKA_LIBS
 CMOCKA_CFLAGS
 CONFIG_DEFS
 CPUCCODE
-CPUTYPE
+MP3RTP_MAN
 WITH_MP3RTP
 WITH_MP3X
 WITH_FRONTEND
 RM_F
 MAKEDEP
-NASM_FORMAT
 LIB_MINOR_VERSION
 LIB_MAJOR_VERSION
 LDADD
@@ -663,13 +662,13 @@ FRONTEND_LDADD
 FRONTEND_CFLAGS
 FRONTEND_LDFLAGS
 INCLUDES
-HAVE_NASM_FALSE
-HAVE_NASM_TRUE
-NASM
 WITH_VECTOR_FALSE
 WITH_VECTOR_TRUE
 WITH_XMM_FALSE
 WITH_XMM_TRUE
+VECTOR_SSE2_FLAGS
+INTERNAL_OPTS_FALSE
+INTERNAL_OPTS_TRUE
 LIB_WITH_DECODER_FALSE
 LIB_WITH_DECODER_TRUE
 mpg123_LIBS
@@ -829,7 +828,6 @@ with_sysroot
 enable_libtool_lock
 with_dmalloc
 enable_largefile
-enable_nasm
 enable_ieeehack
 enable_rpath
 with_libiconv_prefix
@@ -846,6 +844,7 @@ enable_mp3x
 enable_mp3rtp
 enable_ipv6
 enable_dynamic_frontends
+enable_internal
 enable_expopt
 enable_hardening
 enable_native
@@ -1519,7 +1518,6 @@ Optional Features:
                           provide on AIX, [default=aix].
   --disable-libtool-lock  avoid locking (might break parallel builds)
   --disable-largefile     omit support for large files
-  --enable-nasm           Allow the use of nasm if available
   --enable-ieeehack       Enable Takhiros IEEE754 hack (speed improvement for old CPUs)
   --disable-rpath         do not hardcode runtime library paths
   --disable-cpml          Do not use Compaq's fast Math Library
@@ -1535,6 +1533,9 @@ Optional Features:
   --disable-dynamic-frontends
                           link the frontends statically against libmp3lame
                           (default: dynamic)
+  --enable-internal       expose internal/developer tuning options in the
+                          frontend; alpha versions only, forces static
+                          frontend linking (default: disabled)
   --enable-expopt=norm    Whether to enable experimental optimizations
                             default=no
   --disable-hardening     do not add compiler/linker security hardening flags
@@ -15817,32 +15818,7 @@ then :
 fi
 
 
-{ printf '%s\n' "$as_me:${as_lineno-$LINENO}: checking working SSE intrinsics" >&5
-printf %s "checking working SSE intrinsics... " >&6; }
-cat confdefs.h - <<_ACEOF >conftest.$ac_ext
-/* end confdefs.h.  */
-#include <xmmintrin.h>
-int
-main (void)
-{
-_mm_sfence();
-  ;
-  return 0;
-}
-_ACEOF
-if ac_fn_c_try_compile "$LINENO"
-then :
 
-printf '%s\n' "#define HAVE_XMMINTRIN_H 1" >>confdefs.h
-
-	 ac_cv_header_xmmintrin_h=yes
-else case e in #(
-  e) ac_cv_header_xmmintrin_h=no ;;
-esac
-fi
-rm -f core conftest.err conftest.$ac_objext conftest.beam conftest.$ac_ext
-{ printf '%s\n' "$as_me:${as_lineno-$LINENO}: result: ${ac_cv_header_xmmintrin_h}" >&5
-printf '%s\n' "${ac_cv_header_xmmintrin_h}" >&6; }
 
 { printf '%s\n' "$as_me:${as_lineno-$LINENO}: checking for an ANSI C-conforming const" >&5
 printf %s "checking for an ANSI C-conforming const... " >&6; }
@@ -17352,23 +17328,12 @@ fi
 
 CFLAGS=${CFLAGS}
 CONFIG_DEFS=${CONFIG_DEFS}
-NASM=
 INCLUDES="-I\$(top_srcdir)/include -I\$(srcdir)"
 FRONTEND_LDFLAGS=
 FRONTEND_CFLAGS=
 LIB_SOURCES=
 MAKEDEP="-M"
 RM_F="rm -f"
-
-# Check whether --enable-nasm was given.
-if test ${enable_nasm+y}
-then :
-  enableval=$enable_nasm; ASM_FOR_ARCH="i386"
-else case e in #(
-  e) ASM_FOR_ARCH="" ;;
-esac
-fi
-
 
 # Check whether --enable-ieeehack was given.
 if test ${enable_ieeehack+y}
@@ -19973,10 +19938,12 @@ if test "x${WITH_MP3RTP}" = "xyes"; then
 		as_fn_error $? "function socket is mandatory for mp3rtp" "$LINENO" 5
 	fi
 	WITH_MP3RTP=mp3rtp${ac_exeext}
+	MP3RTP_MAN=mp3rtp.1
 	{ printf '%s\n' "$as_me:${as_lineno-$LINENO}: result: yes" >&5
 printf '%s\n' "yes" >&6; }
 else
 	WITH_MP3RTP=
+	MP3RTP_MAN=
 	{ printf '%s\n' "$as_me:${as_lineno-$LINENO}: result: no" >&5
 printf '%s\n' "no" >&6; }
 fi
@@ -20053,7 +20020,7 @@ printf %s "checking if dynamic linking of the frontends is requested... " >&6; }
 # Check whether --enable-dynamic-frontends was given.
 if test ${enable_dynamic_frontends+y}
 then :
-  enableval=$enable_dynamic_frontends;
+  enableval=$enable_dynamic_frontends; dynamic_frontends_given=yes
 else case e in #(
   e) enable_dynamic_frontends=yes ;;
 esac
@@ -20072,6 +20039,63 @@ printf '%s\n' "no" >&6; }
 printf '%s\n' "yes" >&6; }
 	;;
 esac
+
+
+# --enable-internal exposes the internal/developer tuning options in the
+# frontend (--substep, --sfscale, --athcurve, ...). Those setters are
+# deliberately withheld from the shared library's export list
+# (include/libmp3lame.sym), so anything that calls them must link the static
+# archive; enabling the options therefore forces static frontend linking. The
+# options only make sense on an alpha version (LAME_TYPE_VERSION==0) - asking
+# for them on a beta or release tree is an error, not a silent no-op.
+lame_type_version=`sed -n 's/.*LAME_TYPE_VERSION[[:space:]][[:space:]]*\([0-9]\).*/\1/p' "$srcdir/libmp3lame/version.h"`
+# Check whether --enable-internal was given.
+if test ${enable_internal+y}
+then :
+  enableval=$enable_internal; enable_internal="${enableval}"
+else case e in #(
+  e) enable_internal=no ;;
+esac
+fi
+
+{ printf '%s\n' "$as_me:${as_lineno-$LINENO}: checking whether to enable internal/developer options" >&5
+printf %s "checking whether to enable internal/developer options... " >&6; }
+{ printf '%s\n' "$as_me:${as_lineno-$LINENO}: result: ${enable_internal}" >&5
+printf '%s\n' "${enable_internal}" >&6; }
+internal_static_note=
+if test "x${enable_internal}" = "xyes"; then
+	if test "x${lame_type_version}" != "x0"; then
+		as_fn_error $? "--enable-internal requires an alpha version (LAME_TYPE_VERSION==0); this tree is version type \"${lame_type_version}\". The internal/developer tuning options are not available in beta or release builds." "$LINENO" 5
+	fi
+	if test "x${enable_static}" = "xno"; then
+		as_fn_error $? "--enable-internal needs the static libmp3lame archive, but --disable-static was given. The internal setters are not exported from the shared library, so the frontend must link statically. Re-run without --disable-static." "$LINENO" 5
+	fi
+	# _ALLOW_INTERNAL_OPTIONS is defined per-target (frontend and the set_get
+	# unit test) via the INTERNAL_OPTS automake conditional, NOT globally: a
+	# global define would pull the internal-option code path of parse.c into the
+	# other unit tests that compile parse.c only for its argument helpers, and
+	# they link the shared library where the internal setters are absent.
+	case "x${FRONTEND_LDFLAGS}" in
+	*-static*)
+		: ;; # already static (e.g. --disable-dynamic-frontends)
+	*)
+		FRONTEND_LDFLAGS="${FRONTEND_LDFLAGS} -static"
+		if test "x${dynamic_frontends_given}" = "xyes"; then
+			internal_static_note="static frontend linking forced ON, overriding the requested --enable-dynamic-frontends: the internal setters are not exported from the shared library, so the frontend must link the static archive"
+		else
+			internal_static_note="static frontend linking forced ON (the default is dynamic): the internal setters are not exported from the shared library, so the frontend must link the static archive"
+		fi
+		;;
+	esac
+fi
+ if test "x${enable_internal}" = "xyes"; then
+  INTERNAL_OPTS_TRUE=
+  INTERNAL_OPTS_FALSE='#'
+else
+  INTERNAL_OPTS_TRUE='#'
+  INTERNAL_OPTS_FALSE=
+fi
+
 
 
 #
@@ -20184,174 +20208,36 @@ printf '%s\n' "${TERMCAP_DEFAULT}" >&6; }
 
 
 WITH_VECTOR=no
+lame_cpu_x86=no
 case $host_cpu in
 x86_64|amd64)
-	CPUTYPE="no"
-	if test $ac_cv_header_xmmintrin_h = yes ; then
-		WITH_XMM=yes
-		WITH_VECTOR=yes
-	fi
+	lame_cpu_x86=yes
 
 
 printf '%s\n' "#define USE_FAST_LOG 1" >>confdefs.h
 
 	;;
 *86)
-	CPUTYPE="i386"
-	if test $ac_cv_header_xmmintrin_h = yes ; then
-		WITH_XMM=yes
-		WITH_VECTOR=yes
-	fi
+	lame_cpu_x86=yes
 
 
 printf '%s\n' "#define USE_FAST_LOG 1" >>confdefs.h
 
 	;;
 powerpc)
-	CPUTYPE="no"
-
 	# The following should not get enabled on a G5. HOWTO check for a G5?
 
 printf '%s\n' "#define USE_FAST_LOG 1" >>confdefs.h
 
 	;;
 *)
-	CPUTYPE="no"
 	;;
 esac
 
-# which vector code do we support to build on this machine?
- if test "x${WITH_XMM}" = "xyes"; then
-  WITH_XMM_TRUE=
-  WITH_XMM_FALSE='#'
-else
-  WITH_XMM_TRUE='#'
-  WITH_XMM_FALSE=
-fi
+# The vector decision itself is made further down, once CFLAGS is final -
+# see "vector routines" there. AM_CONDITIONAL and AC_MSG_RESULT for it live
+# with the decision rather than here.
 
-
-# needs to be defined to link in the internal vector lib
- if test "x${WITH_VECTOR}" = "xyes"; then
-  WITH_VECTOR_TRUE=
-  WITH_VECTOR_FALSE='#'
-else
-  WITH_VECTOR_TRUE='#'
-  WITH_VECTOR_FALSE=
-fi
-
-{ printf '%s\n' "$as_me:${as_lineno-$LINENO}: checking if I have to build the internal vector lib" >&5
-printf %s "checking if I have to build the internal vector lib... " >&6; }
-{ printf '%s\n' "$as_me:${as_lineno-$LINENO}: result: ${WITH_VECTOR}" >&5
-printf '%s\n' "${WITH_VECTOR}" >&6; }
-
-
-# Extract the first word of "nasm", so it can be a program name with args.
-set dummy nasm; ac_word=$2
-{ printf '%s\n' "$as_me:${as_lineno-$LINENO}: checking for $ac_word" >&5
-printf %s "checking for $ac_word... " >&6; }
-if test ${ac_cv_path_NASM+y}
-then :
-  printf %s "(cached) " >&6
-else case e in #(
-  e) case $NASM in
-  [\\/]* | ?:[\\/]*)
-  ac_cv_path_NASM="$NASM" # Let the user override the test with a path.
-  ;;
-  *)
-  as_save_IFS=$IFS; IFS=$PATH_SEPARATOR
-for as_dir in $PATH
-do
-  IFS=$as_save_IFS
-  case $as_dir in #(((
-    '') as_dir=./ ;;
-    */) ;;
-    *) as_dir=$as_dir/ ;;
-  esac
-    for ac_exec_ext in '' $ac_executable_extensions; do
-  if as_fn_executable_p "$as_dir$ac_word$ac_exec_ext"; then
-    ac_cv_path_NASM="$as_dir$ac_word$ac_exec_ext"
-    printf '%s\n' "$as_me:${as_lineno-$LINENO}: found $as_dir$ac_word$ac_exec_ext" >&5
-    break 2
-  fi
-done
-  done
-IFS=$as_save_IFS
-
-  test -z "$ac_cv_path_NASM" && ac_cv_path_NASM="no"
-  ;;
-esac ;;
-esac
-fi
-NASM=$ac_cv_path_NASM
-if test -n "$NASM"; then
-  { printf '%s\n' "$as_me:${as_lineno-$LINENO}: result: $NASM" >&5
-printf '%s\n' "$NASM" >&6; }
-else
-  { printf '%s\n' "$as_me:${as_lineno-$LINENO}: result: no" >&5
-printf '%s\n' "no" >&6; }
-fi
-
-
-case "${NASM}" in
-no)
-	;;
-*)
-	{ printf '%s\n' "$as_me:${as_lineno-$LINENO}: checking for assembler routines for this processor type" >&5
-printf %s "checking for assembler routines for this processor type... " >&6; }
-	for recurse_over in ${ASM_FOR_ARCH}
-	do
-		if test "${CPUTYPE}" = "${recurse_over}"; then
-			include_asm_routines="yes"
-		fi
-
-		case $host_os in
-		*darwin*)
-			# currently we have problems because of a wrong
-			# libtool hack in the darwin case (for nasm code)
-			include_asm_routines="no"
-			;;
-		esac
-	done
-	if test "x${include_asm_routines}" = "xyes"; then
-
-printf '%s\n' "#define HAVE_NASM 1" >>confdefs.h
-
-
-printf '%s\n' "#define MMX_choose_table 1" >>confdefs.h
-
-	else
-		include_asm_routines="no"
-		NASM="no"
-	fi
-	{ printf '%s\n' "$as_me:${as_lineno-$LINENO}: result: ${include_asm_routines}" >&5
-printf '%s\n' "${include_asm_routines}" >&6; }
-	;;
-esac
- if test "${NASM}" != "no"; then
-  HAVE_NASM_TRUE=
-  HAVE_NASM_FALSE='#'
-else
-  HAVE_NASM_TRUE='#'
-  HAVE_NASM_FALSE=
-fi
-
-
-case $host_os in
-	*cygwin*|*mingw32*)
-		CYGWIN=yes
-		NASM_FORMAT="-f win32 -DWIN32"
-		;;
-	*darwin*)
-		NASM_FORMAT="-f macho"
-		;;
-	*os2-emx*)
-		NASM_FORMAT="-f aout -DAOUT"
-		;;
-	*)
-		CYGWIN=no
-		NASM_FORMAT="-f elf"
-		;;
-esac
 
 #
 # Optimization flags.
@@ -21229,12 +21115,219 @@ fi
 
 
 CFLAGS="${OPTIMIZATION} ${CFLAGS}"
+
+VECTOR_SSE2_FLAGS=
+if test "x${lame_cpu_x86}" = xyes; then
+	{ printf '%s\n' "$as_me:${as_lineno-$LINENO}: checking working SSE2 intrinsics" >&5
+printf %s "checking working SSE2 intrinsics... " >&6; }
+	cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+#include <xmmintrin.h>
+		  #if defined (__GNUC__) && ((__GNUC__ > 4) || ((__GNUC__ == 4) && (__GNUC_MINOR__ >= 2)))
+		  #define SSE2_TARGET __attribute__((target("sse2")))
+		  #else
+		  #define SSE2_TARGET
+		  #endif
+		  static float probe_out;
+		  SSE2_TARGET static void probe(void)
+		  {
+		      __m128 v = _mm_set_ps(1.f, 2.f, 3.f, 4.f);
+		      _mm_store_ss(&probe_out, _mm_sqrt_ps(_mm_mul_ps(v, v)));
+		  }
+int
+main (void)
+{
+probe();
+  ;
+  return 0;
+}
+_ACEOF
+if ac_fn_c_try_compile "$LINENO"
+then :
+  lame_sse2_intrinsics=yes
+else case e in #(
+  e) lame_sse2_intrinsics=no ;;
+esac
+fi
+rm -f core conftest.err conftest.$ac_objext conftest.beam conftest.$ac_ext
+	{ printf '%s\n' "$as_me:${as_lineno-$LINENO}: result: ${lame_sse2_intrinsics}" >&5
+printf '%s\n' "${lame_sse2_intrinsics}" >&6; }
+	if test "x${lame_sse2_intrinsics}" = xno; then
+		{ printf '%s\n' "$as_me:${as_lineno-$LINENO}: checking working SSE2 intrinsics with a per-file SSE2 baseline" >&5
+printf %s "checking working SSE2 intrinsics with a per-file SSE2 baseline... " >&6; }
+		lame_save_CFLAGS=$CFLAGS
+		CFLAGS="$CFLAGS -msse2"
+		cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+#include <xmmintrin.h>
+		  #if defined (__GNUC__) && ((__GNUC__ > 4) || ((__GNUC__ == 4) && (__GNUC_MINOR__ >= 2)))
+		  #define SSE2_TARGET __attribute__((target("sse2")))
+		  #else
+		  #define SSE2_TARGET
+		  #endif
+		  static float probe_out;
+		  SSE2_TARGET static void probe(void)
+		  {
+		      __m128 v = _mm_set_ps(1.f, 2.f, 3.f, 4.f);
+		      _mm_store_ss(&probe_out, _mm_sqrt_ps(_mm_mul_ps(v, v)));
+		  }
+int
+main (void)
+{
+probe();
+  ;
+  return 0;
+}
+_ACEOF
+if ac_fn_c_try_compile "$LINENO"
+then :
+  lame_sse2_baseline=yes
+else case e in #(
+  e) lame_sse2_baseline=no ;;
+esac
+fi
+rm -f core conftest.err conftest.$ac_objext conftest.beam conftest.$ac_ext
+		CFLAGS=$lame_save_CFLAGS
+		{ printf '%s\n' "$as_me:${as_lineno-$LINENO}: result: ${lame_sse2_baseline}" >&5
+printf '%s\n' "${lame_sse2_baseline}" >&6; }
+		if test "x${lame_sse2_baseline}" = xyes; then
+			lame_sse2_intrinsics=yes
+			VECTOR_SSE2_FLAGS="-msse2"
+		fi
+	fi
+	if test "x${lame_sse2_intrinsics}" = xyes; then
+
+printf '%s\n' "#define HAVE_SSE2_INTRINSICS 1" >>confdefs.h
+
+		WITH_XMM=yes
+		WITH_VECTOR=yes
+	fi
+fi
+
+
+# which vector code do we support to build on this machine?
+ if test "x${WITH_XMM}" = "xyes"; then
+  WITH_XMM_TRUE=
+  WITH_XMM_FALSE='#'
+else
+  WITH_XMM_TRUE='#'
+  WITH_XMM_FALSE=
+fi
+
+
+# needs to be defined to link in the internal vector lib
+ if test "x${WITH_VECTOR}" = "xyes"; then
+  WITH_VECTOR_TRUE=
+  WITH_VECTOR_FALSE='#'
+else
+  WITH_VECTOR_TRUE='#'
+  WITH_VECTOR_FALSE=
+fi
+
+{ printf '%s\n' "$as_me:${as_lineno-$LINENO}: checking if I have to build the internal vector lib" >&5
+printf %s "checking if I have to build the internal vector lib... " >&6; }
+{ printf '%s\n' "$as_me:${as_lineno-$LINENO}: result: ${WITH_VECTOR}" >&5
+printf '%s\n' "${WITH_VECTOR}" >&6; }
+
+if test "x$USE_MAINTAINER_MODE" = xyes; then
+	{ printf '%s\n' "$as_me:${as_lineno-$LINENO}: checking whether $CC accepts -Wextra" >&5
+printf %s "checking whether $CC accepts -Wextra... " >&6; }
+lame_check_flag_save=$CFLAGS
+CFLAGS="$CFLAGS -O2 -Wextra -Werror"
+cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+int
+main (void)
+{
+
+  ;
+  return 0;
+}
+_ACEOF
+if ac_fn_c_try_compile "$LINENO"
+then :
+  lame_check_flag_ok=yes
+else case e in #(
+  e) lame_check_flag_ok=no ;;
+esac
+fi
+rm -f core conftest.err conftest.$ac_objext conftest.beam conftest.$ac_ext
+CFLAGS=$lame_check_flag_save
+{ printf '%s\n' "$as_me:${as_lineno-$LINENO}: result: $lame_check_flag_ok" >&5
+printf '%s\n' "$lame_check_flag_ok" >&6; }
+if test "x$lame_check_flag_ok" = xyes
+then :
+  CFLAGS="${CFLAGS} -Wextra"
+fi
+
+	{ printf '%s\n' "$as_me:${as_lineno-$LINENO}: checking whether $CC accepts -Wshadow" >&5
+printf %s "checking whether $CC accepts -Wshadow... " >&6; }
+lame_check_flag_save=$CFLAGS
+CFLAGS="$CFLAGS -O2 -Wshadow -Werror"
+cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+int
+main (void)
+{
+
+  ;
+  return 0;
+}
+_ACEOF
+if ac_fn_c_try_compile "$LINENO"
+then :
+  lame_check_flag_ok=yes
+else case e in #(
+  e) lame_check_flag_ok=no ;;
+esac
+fi
+rm -f core conftest.err conftest.$ac_objext conftest.beam conftest.$ac_ext
+CFLAGS=$lame_check_flag_save
+{ printf '%s\n' "$as_me:${as_lineno-$LINENO}: result: $lame_check_flag_ok" >&5
+printf '%s\n' "$lame_check_flag_ok" >&6; }
+if test "x$lame_check_flag_ok" = xyes
+then :
+  CFLAGS="${CFLAGS} -Wshadow"
+fi
+
+	{ printf '%s\n' "$as_me:${as_lineno-$LINENO}: checking whether $CC accepts -Werror" >&5
+printf %s "checking whether $CC accepts -Werror... " >&6; }
+lame_check_flag_save=$CFLAGS
+CFLAGS="$CFLAGS -O2 -Werror -Werror"
+cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+int
+main (void)
+{
+
+  ;
+  return 0;
+}
+_ACEOF
+if ac_fn_c_try_compile "$LINENO"
+then :
+  lame_check_flag_ok=yes
+else case e in #(
+  e) lame_check_flag_ok=no ;;
+esac
+fi
+rm -f core conftest.err conftest.$ac_objext conftest.beam conftest.$ac_ext
+CFLAGS=$lame_check_flag_save
+{ printf '%s\n' "$as_me:${as_lineno-$LINENO}: result: $lame_check_flag_ok" >&5
+printf '%s\n' "$lame_check_flag_ok" >&6; }
+if test "x$lame_check_flag_ok" = xyes
+then :
+  CFLAGS="${CFLAGS} -Werror"
+fi
+
+fi
+
 LDADD="${LDADD}"
 FRONTEND_CFLAGS="${INCICONV} ${FRONTEND_CFLAGS}"
 FRONTEND_LDADD="${FRONTEND_LDADD} ${LTLIBICONV} ${CONFIG_MATH_LIB}"
-
-
-
 
 
 
@@ -21359,7 +21452,7 @@ fi
 
 
 
-ac_config_files="$ac_config_files Makefile test/Makefile test/unit/Makefile libmp3lame/Makefile libmp3lame/i386/Makefile libmp3lame/lame.pc libmp3lame/vector/Makefile frontend/Makefile mpglib/Makefile doc/Makefile doc/html/Makefile doc/man/Makefile include/Makefile Dll/Makefile misc/Makefile dshow/Makefile ACM/Makefile ACM/ADbg/Makefile ACM/ddk/Makefile ACM/tinyxml/Makefile lame.spec mac/Makefile vc_solution/Makefile"
+ac_config_files="$ac_config_files Makefile test/Makefile test/unit/Makefile libmp3lame/Makefile libmp3lame/lame.pc libmp3lame/vector/Makefile frontend/Makefile mpglib/Makefile doc/Makefile doc/html/Makefile doc/man/Makefile include/Makefile Dll/Makefile misc/Makefile dshow/Makefile ACM/Makefile ACM/ADbg/Makefile ACM/ddk/Makefile ACM/tinyxml/Makefile lame.spec mac/Makefile vc_solution/Makefile"
 
 
 cat >confcache <<\_ACEOF
@@ -21485,16 +21578,16 @@ if test -z "${LIB_WITH_DECODER_TRUE}" && test -z "${LIB_WITH_DECODER_FALSE}"; th
   as_fn_error $? "conditional \"LIB_WITH_DECODER\" was never defined.
 Usually this means the macro was only invoked conditionally." "$LINENO" 5
 fi
+if test -z "${INTERNAL_OPTS_TRUE}" && test -z "${INTERNAL_OPTS_FALSE}"; then
+  as_fn_error $? "conditional \"INTERNAL_OPTS\" was never defined.
+Usually this means the macro was only invoked conditionally." "$LINENO" 5
+fi
 if test -z "${WITH_XMM_TRUE}" && test -z "${WITH_XMM_FALSE}"; then
   as_fn_error $? "conditional \"WITH_XMM\" was never defined.
 Usually this means the macro was only invoked conditionally." "$LINENO" 5
 fi
 if test -z "${WITH_VECTOR_TRUE}" && test -z "${WITH_VECTOR_FALSE}"; then
   as_fn_error $? "conditional \"WITH_VECTOR\" was never defined.
-Usually this means the macro was only invoked conditionally." "$LINENO" 5
-fi
-if test -z "${HAVE_NASM_TRUE}" && test -z "${HAVE_NASM_FALSE}"; then
-  as_fn_error $? "conditional \"HAVE_NASM\" was never defined.
 Usually this means the macro was only invoked conditionally." "$LINENO" 5
 fi
 if test -z "${ENABLE_UNIT_TESTS_TRUE}" && test -z "${ENABLE_UNIT_TESTS_FALSE}"; then
@@ -22372,7 +22465,6 @@ do
     "test/Makefile") CONFIG_FILES="$CONFIG_FILES test/Makefile" ;;
     "test/unit/Makefile") CONFIG_FILES="$CONFIG_FILES test/unit/Makefile" ;;
     "libmp3lame/Makefile") CONFIG_FILES="$CONFIG_FILES libmp3lame/Makefile" ;;
-    "libmp3lame/i386/Makefile") CONFIG_FILES="$CONFIG_FILES libmp3lame/i386/Makefile" ;;
     "libmp3lame/lame.pc") CONFIG_FILES="$CONFIG_FILES libmp3lame/lame.pc" ;;
     "libmp3lame/vector/Makefile") CONFIG_FILES="$CONFIG_FILES libmp3lame/vector/Makefile" ;;
     "frontend/Makefile") CONFIG_FILES="$CONFIG_FILES frontend/Makefile" ;;
@@ -23680,4 +23772,86 @@ if test -n "$ac_unrecognized_opts" && test "$enable_option_checking" != no; then
 printf '%s\n' "$as_me: WARNING: unrecognized options: $ac_unrecognized_opts" >&2;}
 fi
 
+
+
+# ---------------------------------------------------------------------------
+# Configuration summary. Anything that was forced to a non-default value, or
+# that overrode a user-supplied option, is reported with the reason so the
+# result is never surprising.
+# ---------------------------------------------------------------------------
+case "${lame_type_version}" in
+  0) lame_version_type_name=alpha ;;
+  1) lame_version_type_name=beta ;;
+  2) lame_version_type_name=release ;;
+  *) lame_version_type_name="unknown (${lame_type_version})" ;;
+esac
+case "x${FRONTEND_LDFLAGS}" in
+  *-static*) frontend_link_kind=static ;;
+  *)         frontend_link_kind=dynamic ;;
+esac
+# libsndfile has three outcomes, not two: not asked for, in use, or asked for
+# and not found - in which case the file io silently falls back to lame's own
+# routines, which is easy to miss among the rest of the configure output.
+if test "${CONFIG_FILEIO}" = "sndfile"; then
+  sndfile_state=yes
+elif test "x${HAVE_SNDFILE}" = "xno"; then
+  sndfile_state="requested, not found (using lame)"
+else
+  sndfile_state="not requested"
+fi
+if test "x${HAVE_TERMCAP}" = "x"; then
+  termcap_state=none
+else
+  termcap_state="${HAVE_TERMCAP}"
+fi
+if test "${HAVE_MPG123}" = "yes" && test "${CONFIG_DECODER}" != "no"; then
+  decoder_state=yes
+else
+  decoder_state=no
+fi
+if test -n "${WITH_FRONTEND}"; then prog_lame=yes; else prog_lame=no; fi
+if test -n "${WITH_MP3X}"; then prog_mp3x=yes; else prog_mp3x=no; fi
+if test -n "${WITH_MP3RTP}"; then prog_mp3rtp=yes; else prog_mp3rtp=no; fi
+# The vector routines are named by the instruction sets they are BUILT for.
+# Whether they are used is decided per CPU at run time, and "lame --verbose"
+# reports what the running machine actually got. Only SSE2 is probed today.
+lame_vector_sets=
+if test "x${WITH_XMM}" = "xyes"; then
+  lame_vector_sets="SSE2"
+fi
+if test -z "${lame_vector_sets}"; then
+  lame_vector_sets=none
+fi
+echo ""
+echo "  LAME ${PACKAGE_VERSION} configuration summary"
+echo "  -------------------------------------------"
+echo "    version type .......... ${lame_version_type_name}"
+echo "    frontend linking ...... ${frontend_link_kind}"
+echo "    internal options ...... ${enable_internal:-no}"
+echo "    unit tests ............ ${enable_unit_tests:-no}"
+echo ""
+echo "    optional libraries"
+echo "      libmpg123 ........... ${HAVE_MPG123:-no}"
+echo "      libsndfile .......... ${sndfile_state}"
+echo "      terminal library .... ${termcap_state}"
+echo "      GTK 1.2 ............. ${HAVE_GTK:-no}"
+echo ""
+echo "    programs"
+echo "      lame ................ ${prog_lame}"
+echo "      mp3x ................ ${prog_mp3x}"
+echo "      mp3rtp .............. ${prog_mp3rtp}"
+echo ""
+echo "    features"
+echo "      decoder ............. ${decoder_state}"
+echo "      file io ............. ${CONFIG_FILEIO}"
+echo "      analyzer hooks ...... ${CONFIG_ANALYZER:-no}"
+echo "      vector routines ..... ${lame_vector_sets}"
+echo "      hardening ........... ${enable_hardening:-no}"
+echo "      native tuning ....... ${enable_native:-no}"
+echo "      debug ............... ${CONFIG_DEBUG:-no}"
+if test -n "${internal_static_note}"; then
+  echo ""
+  echo "    NOTE: ${internal_static_note}."
+fi
+echo ""
 
